@@ -1,0 +1,37 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      DATABASE_URL: ${DATABASE_URL}
+      BOT_ADMIN_TELEGRAM_IDS: ${BOT_ADMIN_TELEGRAM_IDS}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 30s
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: utmn-events
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    command: [ "postgres", "-c", "timezone=UTC" ]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/db/bootstrap.sql:/docker-entrypoint-initdb.d/001-bootstrap.sql:ro
+      - ./deploy/db/init.sql:/opt/db/init.sql:ro
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-h", "127.0.0.1", "-U", "bot", "-d", "utmn-events" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres_data:
