@@ -30,11 +30,23 @@ const (
 	profilePreview   fsm.StateID = "user.profile.preview"
 )
 
+type profileField string
+
+const (
+	firstNameField profileField = "first_name"
+	lastNameField  profileField = "last_name"
+	surnameField   profileField = "surname"
+)
+
 type session struct {
 	profile domain.User
-	state   fsm.StateID
-	field   fsm.StateID
+	field   profileField
 	token   string
+}
+
+type conversation struct {
+	session
+	state fsm.StateID
 }
 type screen struct {
 	text  string
@@ -74,7 +86,7 @@ func (s *ProfileService) begin(ctx context.Context, userID int64) (screen, error
 	if err != nil {
 		return screen{}, err
 	}
-	d := session{profile: user, state: profileView, token: rand.Text()}
+	d := conversation{state: profileView, session: session{profile: user, token: rand.Text()}}
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -91,7 +103,7 @@ func (s *ProfileService) editFirstName(ctx context.Context, userID int64, callba
 	if !exists || d.state != profileView || callback != "user:profile:"+d.token+":first_name" {
 		return staleScreen(), nil
 	}
-	d.state, d.field, d.token = profileFirstName, profileFirstName, rand.Text()
+	d.state, d.field, d.token = profileFirstName, firstNameField, rand.Text()
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -130,7 +142,7 @@ func (s *ProfileService) editLastName(ctx context.Context, userID int64, callbac
 	if !exists || d.state != profileView || callback != "user:profile:"+d.token+":last_name" {
 		return staleScreen(), nil
 	}
-	d.state, d.field, d.token = profileLastName, profileLastName, rand.Text()
+	d.state, d.field, d.token = profileLastName, lastNameField, rand.Text()
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -169,7 +181,7 @@ func (s *ProfileService) editSurname(ctx context.Context, userID int64, callback
 	if !exists || d.state != profileView || callback != "user:profile:"+d.token+":surname" {
 		return staleScreen(), nil
 	}
-	d.state, d.field, d.token = profileSurname, profileSurname, rand.Text()
+	d.state, d.field, d.token = profileSurname, surnameField, rand.Text()
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -225,11 +237,11 @@ func (s *ProfileService) confirm(ctx context.Context, userID int64, callback str
 		return staleScreen(), nil
 	}
 	switch d.field {
-	case profileFirstName:
+	case firstNameField:
 		err = s.repo.UpdateFirstName(ctx, userID, d.profile.FirstName)
-	case profileLastName:
+	case lastNameField:
 		err = s.repo.UpdateLastName(ctx, userID, d.profile.LastName)
-	case profileSurname:
+	case surnameField:
 		err = s.repo.UpdateSurname(ctx, userID, d.profile.Surname)
 	default:
 		return screen{}, errors.New("invalid profile field")
@@ -241,7 +253,7 @@ func (s *ProfileService) confirm(ctx context.Context, userID int64, callback str
 	if err != nil {
 		return render(d), err
 	}
-	d = session{profile: user, state: profileView, token: rand.Text()}
+	d = conversation{state: profileView, session: session{profile: user, token: rand.Text()}}
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -263,37 +275,49 @@ func (s *ProfileService) cancelEdit(ctx context.Context, userID int64, callback 
 	if err != nil {
 		return render(d), err
 	}
-	d = session{profile: user, state: profileView, token: rand.Text()}
+	d = conversation{state: profileView, session: session{profile: user, token: rand.Text()}}
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
 	return render(d), nil
 }
-func (s *ProfileService) load(ctx context.Context, userID int64) (session, bool, error) {
-	state, err := s.machine.CurrentState(ctx, userID)
+func (f *ProfileService) load(ctx context.Context, userID int64) (conversation, bool, error) {
+	state, err := f.machine.CurrentState(ctx, userID)
 	if err != nil {
-		return session{}, false, err
+		return conversation{}, false, err
 	}
 	if state == "idle" {
-		return session{}, false, nil
+		return conversation{}, false, nil
 	}
-	d, err := s.machine.GetData(ctx, userID, "session")
+	switch state {
+	case profileView, profileFirstName, profileLastName, profileSurname, profilePreview:
+	default:
+		return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
+	}
+	value, err := f.machine.GetData(ctx, userID, "session")
+	if errors.Is(err, fsm.ErrUserDataNotFound) {
+		return conversation{}, false, nil
+	}
 	if err != nil {
-		return session{}, false, err
+		return conversation{}, false, err
 	}
-	d.state = state
-	return d, true, nil
+	return conversation{session: value, state: state}, true, nil
 }
-func (s *ProfileService) save(ctx context.Context, userID int64, d session) error {
-	if err := s.machine.SetData(ctx, userID, "session", d); err != nil {
+func (f *ProfileService) save(ctx context.Context, userID int64, value conversation) error {
+	switch value.state {
+	case profileView, profileFirstName, profileLastName, profileSurname, profilePreview:
+	default:
+		return fmt.Errorf("invalid conversation state %q", value.state)
+	}
+	if err := f.machine.SetData(ctx, userID, "session", value.session); err != nil {
 		return err
 	}
-	return s.machine.Transition(ctx, userID, d.state)
+	return f.machine.Transition(ctx, userID, value.state)
 }
 func validName(text string) bool {
 	return text != "" && utf8.RuneCountInString(text) <= 100 && !strings.HasPrefix(text, "/") && !strings.ContainsFunc(text, unicode.IsControl)
 }
-func render(d session) screen {
+func render(d conversation) screen {
 	surname := d.profile.Surname
 	if surname == "" {
 		surname = "не указано"

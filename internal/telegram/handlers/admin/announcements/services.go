@@ -27,6 +27,10 @@ const (
 type draft struct {
 	token string
 	text  string
+}
+
+type conversation struct {
+	draft
 	state fsm.StateID
 }
 
@@ -105,7 +109,7 @@ func (s *AnnouncementsService) begin(ctx context.Context, userID int64) (screen,
 	if s.active[userID] {
 		return screen{text: "Ваше объявление уже рассылается. Дождитесь отчёта.", finished: true}, nil
 	}
-	d := draft{token: rand.Text(), state: textState}
+	d := conversation{state: textState, draft: draft{token: rand.Text()}}
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -293,34 +297,46 @@ func (s *AnnouncementsService) send(job delivery, sendMessage func(context.Conte
 	}
 }
 
-func (s *AnnouncementsService) load(ctx context.Context, userID int64) (draft, bool, error) {
-	state, err := s.machine.CurrentState(ctx, userID)
+func (f *AnnouncementsService) load(ctx context.Context, userID int64) (conversation, bool, error) {
+	state, err := f.machine.CurrentState(ctx, userID)
 	if err != nil {
-		return draft{}, false, err
+		return conversation{}, false, err
 	}
-	if state != textState && state != previewState {
-		return draft{}, false, nil
+	if state == "idle" {
+		return conversation{}, false, nil
 	}
-	d, err := s.machine.GetData(ctx, userID, "draft")
+	switch state {
+	case textState, previewState:
+	default:
+		return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
+	}
+	value, err := f.machine.GetData(ctx, userID, "draft")
+	if errors.Is(err, fsm.ErrUserDataNotFound) {
+		return conversation{}, false, nil
+	}
 	if err != nil {
-		return draft{}, false, err
+		return conversation{}, false, err
 	}
-	d.state = state
-	return d, true, nil
+	return conversation{draft: value, state: state}, true, nil
 }
 
-func (s *AnnouncementsService) save(ctx context.Context, userID int64, d draft) error {
-	if err := s.machine.SetData(ctx, userID, "draft", d); err != nil {
+func (f *AnnouncementsService) save(ctx context.Context, userID int64, value conversation) error {
+	switch value.state {
+	case textState, previewState:
+	default:
+		return fmt.Errorf("invalid conversation state %q", value.state)
+	}
+	if err := f.machine.SetData(ctx, userID, "draft", value.draft); err != nil {
 		return err
 	}
-	return s.machine.Transition(ctx, userID, d.state)
+	return f.machine.Transition(ctx, userID, value.state)
 }
 
-func validCallback(d draft, callback, action string) bool {
+func validCallback(d conversation, callback, action string) bool {
 	return callback == "admin:announcement:"+d.token+":"+action
 }
 
-func draftScreen(d draft) screen {
+func draftScreen(d conversation) screen {
 	text := "Создание объявления."
 	if d.state == previewState {
 		text = "Проверьте объявление:\n\n" + d.text + "\n\nОтправить?"

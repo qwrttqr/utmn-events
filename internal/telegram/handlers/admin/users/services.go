@@ -20,25 +20,25 @@ import (
 type Repository interface {
 	List(context.Context, int, int) ([]domain.User, error)
 }
-type session struct {
+type conversation struct {
 	page  int
 	token string
 }
 type UsersService struct {
 	mu       sync.Mutex
-	machine  *fsm.FSM[string, session]
+	machine  *fsm.FSM[string, conversation]
 	repo     Repository
 	adminIDs []int64
 }
 
 func NewService(repo Repository, adminIDs []int64) *UsersService {
-	return &UsersService{machine: fsm.NewInMemoryFSM[string, session]("idle"), repo: repo, adminIDs: slices.Clone(adminIDs)}
+	return &UsersService{machine: fsm.NewInMemoryFSM[string, conversation]("idle"), repo: repo, adminIDs: slices.Clone(adminIDs)}
 }
 func (f *UsersService) Cancel(id int64) { f.mu.Lock(); defer f.mu.Unlock(); f.clear(id) }
 
 func (f *UsersService) process(ctx context.Context, userID int64, callback string) (navigation.Page, error) {
 	if callback == "admin:users" {
-		return f.list(ctx, userID, callback)
+		return f.list(ctx, userID)
 	}
 	parts := strings.Split(callback, ":")
 	if len(parts) != 4 {
@@ -98,11 +98,11 @@ func (f *UsersService) staleCallback(ctx context.Context, userID int64, callback
 	return page, err
 }
 
-func (f *UsersService) list(ctx context.Context, userID int64, callback string) (navigation.Page, error) {
+func (f *UsersService) list(ctx context.Context, userID int64) (navigation.Page, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	s := session{}
+	s := conversation{}
 
 	s.token = rand.Text()
 	page, err := f.render(ctx, userID, s)
@@ -114,7 +114,7 @@ func (f *UsersService) list(ctx context.Context, userID int64, callback string) 
 	return page, err
 }
 
-func (f *UsersService) render(ctx context.Context, userID int64, s session) (navigation.Page, error) {
+func (f *UsersService) render(ctx context.Context, userID int64, s conversation) (navigation.Page, error) {
 	users, err := f.repo.List(ctx, pagination.Size+1, s.page*pagination.Size)
 	if err != nil {
 		return navigation.Page{}, err
@@ -142,33 +142,31 @@ func (f *UsersService) render(ctx context.Context, userID int64, s session) (nav
 	return page, nil
 }
 
-var conversationStates = [...]fsm.StateID{"admin.users.list"}
+const usersList fsm.StateID = "admin.users.list"
 
 func reportStorageError(err error) { slog.Error("conversation storage failed", "error", err) }
-func (f *UsersService) load(ctx context.Context, userID int64) (session, bool, error) {
+func (f *UsersService) load(ctx context.Context, userID int64) (conversation, bool, error) {
 	state, err := f.machine.CurrentState(ctx, userID)
 	if err != nil {
-		return session{}, false, err
+		return conversation{}, false, err
 	}
 	value, err := f.machine.GetData(ctx, userID, "session")
 	if errors.Is(err, fsm.ErrUserDataNotFound) {
-		return session{}, false, nil
+		return conversation{}, false, nil
 	}
 	if err != nil {
-		return session{}, false, err
+		return conversation{}, false, err
 	}
-	for _, expected := range conversationStates {
-		if state == expected {
-			return value, true, nil
-		}
+	if state == usersList {
+		return value, true, nil
 	}
-	return session{}, false, fmt.Errorf("unexpected conversation state %q", state)
+	return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
 }
-func (f *UsersService) save(ctx context.Context, userID int64, value session) error {
+func (f *UsersService) save(ctx context.Context, userID int64, value conversation) error {
 	if err := f.machine.SetData(ctx, userID, "session", value); err != nil {
 		return err
 	}
-	return f.machine.Transition(ctx, userID, conversationStates[0])
+	return f.machine.Transition(ctx, userID, usersList)
 }
 func (f *UsersService) clear(userID int64) {
 	if err := f.machine.Finish(context.Background(), userID); err != nil {

@@ -29,22 +29,24 @@ type UserRepository interface {
 	ListForEvent(context.Context, int64, int, int) ([]domain.User, error)
 }
 
-type mode int
-
 const (
-	list mode = iota
-	card
-	fields
-	confirmDelete
-	participants
+	list          fsm.StateID = "admin.events.list"
+	card          fsm.StateID = "admin.events.card"
+	fields        fsm.StateID = "admin.events.fields"
+	confirmDelete fsm.StateID = "admin.events.delete"
+	participants  fsm.StateID = "admin.events.participants"
 )
 const pageSize = pagination.Size
 
 type session struct {
 	token   string
-	mode    mode
 	page    int
 	eventID int64
+}
+
+type conversation struct {
+	session
+	state fsm.StateID
 }
 type editRequest struct {
 	event domain.Event
@@ -79,7 +81,7 @@ func (f *EventManagementService) Cancel(id int64) {
 
 func (f *EventManagementService) process(ctx context.Context, userID int64, callback string) (navigation.Page, *editRequest, error) {
 	if callback == "admin:events" {
-		return f.list(ctx, userID, callback)
+		return f.list(ctx, userID)
 	}
 	parts := strings.Split(callback, ":")
 	if len(parts) != 4 {
@@ -127,7 +129,7 @@ func (f *EventManagementService) page(ctx context.Context, userID int64, callbac
 	}
 	action := parts[3]
 
-	if strings.HasPrefix(action, "page") && (s.mode == list || s.mode == participants) {
+	if strings.HasPrefix(action, "page") && (s.state == list || s.state == participants) {
 		page, ok := pagination.Move(s.page, action)
 		if ok {
 			s.page = page
@@ -164,7 +166,7 @@ func (f *EventManagementService) open(ctx context.Context, userID int64, callbac
 		if err != nil || id <= 0 {
 			return navigation.Page{}, nil, errors.New("invalid event ID")
 		}
-		s.eventID, s.mode = id, card
+		s.eventID, s.state = id, card
 	}
 
 	s.token = rand.Text()
@@ -192,8 +194,8 @@ func (f *EventManagementService) edit(ctx context.Context, userID int64, callbac
 	}
 	action := parts[3]
 
-	if action == "edit" && s.mode == card {
-		s.mode = fields
+	if action == "edit" && s.state == card {
+		s.state = fields
 	}
 
 	s.token = rand.Text()
@@ -221,8 +223,8 @@ func (f *EventManagementService) participants(ctx context.Context, userID int64,
 	}
 	action := parts[3]
 
-	if action == "participants" && s.mode == card {
-		s.mode, s.page = participants, 0
+	if action == "participants" && s.state == card {
+		s.state, s.page = participants, 0
 	}
 
 	s.token = rand.Text()
@@ -250,7 +252,7 @@ func (f *EventManagementService) field(ctx context.Context, userID int64, callba
 	}
 	action := parts[3]
 
-	if strings.HasPrefix(action, "field") && s.mode == fields {
+	if strings.HasPrefix(action, "field") && s.state == fields {
 		field := domain.EventField(strings.TrimPrefix(action, "field"))
 		if !validField(field) {
 			return navigation.Page{}, nil, errors.New("invalid event field")
@@ -288,8 +290,8 @@ func (f *EventManagementService) delete(ctx context.Context, userID int64, callb
 	}
 	action := parts[3]
 
-	if action == "delete" && s.mode == card {
-		s.mode = confirmDelete
+	if action == "delete" && s.state == card {
+		s.state = confirmDelete
 	}
 
 	s.token = rand.Text()
@@ -317,8 +319,8 @@ func (f *EventManagementService) keep(ctx context.Context, userID int64, callbac
 	}
 	action := parts[3]
 
-	if action == "keep" && s.mode == confirmDelete {
-		s.mode = card
+	if action == "keep" && s.state == confirmDelete {
+		s.state = card
 	}
 
 	s.token = rand.Text()
@@ -346,7 +348,7 @@ func (f *EventManagementService) confirmDelete(ctx context.Context, userID int64
 	}
 	action := parts[3]
 
-	if action == "confirm" && s.mode == confirmDelete {
+	if action == "confirm" && s.state == confirmDelete {
 		if err := f.repo.Delete(ctx, s.eventID); err != nil {
 			return navigation.Page{}, nil, err
 		}
@@ -389,11 +391,11 @@ func (f *EventManagementService) staleCallback(ctx context.Context, userID int64
 	return page, nil, nil
 }
 
-func (f *EventManagementService) list(ctx context.Context, userID int64, callback string) (navigation.Page, *editRequest, error) {
+func (f *EventManagementService) list(ctx context.Context, userID int64) (navigation.Page, *editRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	s := session{mode: list}
+	s := conversation{state: list, session: session{}}
 
 	s.token = rand.Text()
 	page, err := f.render(ctx, userID, s)
@@ -414,38 +416,39 @@ func validField(field domain.EventField) bool {
 	return false
 }
 
-var conversationStates = [...]fsm.StateID{"admin.events.list", "admin.events.card", "admin.events.fields", "admin.events.delete", "admin.events.participants"}
-
 func reportStorageError(err error) { slog.Error("conversation storage failed", "error", err) }
-func (f *EventManagementService) load(ctx context.Context, userID int64) (session, bool, error) {
+func (f *EventManagementService) load(ctx context.Context, userID int64) (conversation, bool, error) {
 	state, err := f.machine.CurrentState(ctx, userID)
 	if err != nil {
-		return session{}, false, err
+		return conversation{}, false, err
+	}
+	if state == "idle" {
+		return conversation{}, false, nil
+	}
+	switch state {
+	case list, card, fields, confirmDelete, participants:
+	default:
+		return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
 	}
 	value, err := f.machine.GetData(ctx, userID, "session")
 	if errors.Is(err, fsm.ErrUserDataNotFound) {
-		return session{}, false, nil
+		return conversation{}, false, nil
 	}
 	if err != nil {
-		return session{}, false, err
+		return conversation{}, false, err
 	}
-	for index, expected := range conversationStates {
-		if state == expected {
-			value.mode = mode(index)
-			return value, true, nil
-		}
-	}
-	return session{}, false, fmt.Errorf("unexpected conversation state %q", state)
+	return conversation{session: value, state: state}, true, nil
 }
-func (f *EventManagementService) save(ctx context.Context, userID int64, value session) error {
-	index := int(value.mode)
-	if index < 0 || index >= len(conversationStates) {
-		return errors.New("invalid conversation step")
+func (f *EventManagementService) save(ctx context.Context, userID int64, value conversation) error {
+	switch value.state {
+	case list, card, fields, confirmDelete, participants:
+	default:
+		return fmt.Errorf("invalid conversation state %q", value.state)
 	}
-	if err := f.machine.SetData(ctx, userID, "session", value); err != nil {
+	if err := f.machine.SetData(ctx, userID, "session", value.session); err != nil {
 		return err
 	}
-	return f.machine.Transition(ctx, userID, conversationStates[index])
+	return f.machine.Transition(ctx, userID, value.state)
 }
 func (f *EventManagementService) clear(userID int64) {
 	if err := f.machine.Finish(context.Background(), userID); err != nil {
@@ -453,9 +456,9 @@ func (f *EventManagementService) clear(userID int64) {
 	}
 }
 
-func (f *EventManagementService) render(ctx context.Context, userID int64, s session) (navigation.Page, error) {
-	page := navigation.Page{Key: fmt.Sprintf("admin:events:%d:%d", s.mode, s.eventID), Admin: true}
-	if s.mode == list {
+func (f *EventManagementService) render(ctx context.Context, userID int64, s conversation) (navigation.Page, error) {
+	page := navigation.Page{Key: fmt.Sprintf("admin:events:%s:%d", s.state, s.eventID), Admin: true}
+	if s.state == list {
 		page.Key, page.Text = "admin:events:list", "Мероприятия\nВыберите мероприятие."
 		events, err := f.repo.List(ctx, pageSize+1, s.page*pageSize)
 		if err != nil {
@@ -474,7 +477,7 @@ func (f *EventManagementService) render(ctx context.Context, userID int64, s ses
 		if err != nil {
 			return navigation.Page{}, err
 		}
-		switch s.mode {
+		switch s.state {
 		case card:
 			location, err := time.LoadLocation("Asia/Yekaterinburg")
 			if err != nil {

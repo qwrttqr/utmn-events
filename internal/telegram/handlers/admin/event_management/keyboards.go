@@ -20,7 +20,7 @@ func listKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{{Text: "Мероприятия", CallbackData: "admin:events"}}}}
 }
 
-func eventsKeyboard(s session, events []domain.EventSummary, more bool) *models.InlineKeyboardMarkup {
+func eventsKeyboard(s conversation, events []domain.EventSummary, more bool) *models.InlineKeyboardMarkup {
 	keyboard := &models.InlineKeyboardMarkup{}
 	add := func(text, action string) {
 		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, []models.InlineKeyboardButton{{Text: text, CallbackData: "admin:manage:" + s.token + ":" + action}})
@@ -32,7 +32,7 @@ func eventsKeyboard(s session, events []domain.EventSummary, more bool) *models.
 	return keyboard
 }
 
-func cardKeyboard(s session, event domain.Event) *models.InlineKeyboardMarkup {
+func cardKeyboard(s conversation, event domain.Event) *models.InlineKeyboardMarkup {
 	keyboard := &models.InlineKeyboardMarkup{}
 	add := func(text, action string) {
 		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, []models.InlineKeyboardButton{{Text: text, CallbackData: "admin:manage:" + s.token + ":" + action}})
@@ -43,13 +43,13 @@ func cardKeyboard(s session, event domain.Event) *models.InlineKeyboardMarkup {
 	return keyboard
 }
 
-func participantsKeyboard(s session, more bool) *models.InlineKeyboardMarkup {
+func participantsKeyboard(s conversation, more bool) *models.InlineKeyboardMarkup {
 	keyboard := &models.InlineKeyboardMarkup{}
 	pagination.Add(keyboard, s.page, more, func(action string) string { return "admin:manage:" + s.token + ":" + action })
 	return keyboard
 }
 
-func fieldsKeyboard(s session) *models.InlineKeyboardMarkup {
+func fieldsKeyboard(s conversation) *models.InlineKeyboardMarkup {
 	keyboard := &models.InlineKeyboardMarkup{}
 	add := func(text, action string) {
 		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, []models.InlineKeyboardButton{{Text: text, CallbackData: "admin:manage:" + s.token + ":" + action}})
@@ -65,7 +65,7 @@ func fieldsKeyboard(s session) *models.InlineKeyboardMarkup {
 	}
 	return keyboard
 }
-func deleteKeyboard(s session) *models.InlineKeyboardMarkup {
+func deleteKeyboard(s conversation) *models.InlineKeyboardMarkup {
 	keyboard := &models.InlineKeyboardMarkup{}
 	add := func(text, action string) {
 		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, []models.InlineKeyboardButton{{Text: text, CallbackData: "admin:manage:" + s.token + ":" + action}})

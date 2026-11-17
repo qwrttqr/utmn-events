@@ -109,7 +109,7 @@ func (h *Handler) List(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 	h.beforeBegin(q.From.ID)
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	page, edit, err := h.service.list(dbCtx, q.From.ID, q.Data)
+	page, edit, err := h.service.list(dbCtx, q.From.ID)
 	cancel()
 	if errors.Is(err, domain.ErrEventNotFound) {
 		h.service.Cancel(q.From.ID)
