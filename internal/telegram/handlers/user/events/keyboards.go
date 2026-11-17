@@ -21,7 +21,7 @@ func entryKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{{Text: "Мероприятия", CallbackData: "user:events"}}}}
 }
 
-func tagsKeyboard(s session, tags []domain.Tag, more bool) *models.InlineKeyboardMarkup {
+func tagsKeyboard(s conversation, tags []domain.Tag, more bool) *models.InlineKeyboardMarkup {
 	markup := &models.InlineKeyboardMarkup{}
 	callback := func(action string) string { return "user:event:" + s.token + ":" + action }
 	add := func(text, action string) {
@@ -41,7 +41,7 @@ func tagsKeyboard(s session, tags []domain.Tag, more bool) *models.InlineKeyboar
 	add("Найти мероприятия", "search")
 	return markup
 }
-func eventsKeyboard(s session, events []domain.EventSummary, more bool) *models.InlineKeyboardMarkup {
+func eventsKeyboard(s conversation, events []domain.EventSummary, more bool) *models.InlineKeyboardMarkup {
 	markup := &models.InlineKeyboardMarkup{}
 	callback := func(action string) string { return "user:event:" + s.token + ":" + action }
 	add := func(text, action string) {
@@ -57,13 +57,13 @@ func eventsKeyboard(s session, events []domain.EventSummary, more bool) *models.
 	pagination.Add(markup, s.page, more, callback)
 	return markup
 }
-func cardKeyboard(s session, event domain.Event, enrolled bool, now time.Time) *models.InlineKeyboardMarkup {
+func cardKeyboard(s conversation, event domain.Event, enrolled bool, now time.Time) *models.InlineKeyboardMarkup {
 	markup := &models.InlineKeyboardMarkup{}
 	callback := func(action string) string { return "user:event:" + s.token + ":" + action }
 	add := func(text, action string) {
 		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{{Text: text, CallbackData: callback(action)}})
 	}
-	if s.mode == cancelEnrollment {
+	if s.state == cancelEnrollment {
 		add("Подтвердить отмену записи", "confirm")
 		add("Оставить запись", "keep")
 	} else if enrolled {

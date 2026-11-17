@@ -13,18 +13,20 @@ import (
 	"utmn-events-bot/internal/fsm"
 )
 
-type step int
-
 const (
-	firstName step = iota
-	lastName
-	surname
-	confirmation
+	firstName    fsm.StateID = "registration.first_name"
+	lastName     fsm.StateID = "registration.last_name"
+	surname      fsm.StateID = "registration.surname"
+	confirmation fsm.StateID = "registration.confirmation"
 )
 
 type draft struct {
 	profile domain.User
-	step    step
+}
+
+type conversation struct {
+	draft
+	state fsm.StateID
 }
 
 type screen struct {
@@ -80,7 +82,7 @@ func (s *RegistrationService) hasDraft(userID int64) bool {
 	return exists
 }
 
-func (s *RegistrationService) inState(userID int64, expected step) bool {
+func (s *RegistrationService) inState(userID int64, expected fsm.StateID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.machine.CurrentState(context.Background(), userID)
@@ -88,13 +90,13 @@ func (s *RegistrationService) inState(userID int64, expected step) bool {
 		reportStorageError(err)
 		return false
 	}
-	return state == conversationStates[expected]
+	return state == expected
 }
 
 func (s *RegistrationService) begin(ctx context.Context, userID int64, username string) (screen, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d := draft{profile: domain.User{TelegramID: userID, Username: username, Role: "user"}, step: firstName}
+	d := conversation{state: firstName, draft: draft{profile: domain.User{TelegramID: userID, Username: username, Role: "user"}}}
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -111,7 +113,7 @@ func (s *RegistrationService) setFirstName(ctx context.Context, userID int64, te
 	if !exists {
 		return screen{text: "Начните регистрацию.", start: true}, nil
 	}
-	if d.step != firstName {
+	if d.state != firstName {
 		return prompt(d), nil
 	}
 	text = strings.TrimSpace(text)
@@ -120,7 +122,7 @@ func (s *RegistrationService) setFirstName(ctx context.Context, userID int64, te
 		view.text = "Введите от 1 до 100 символов без команд и переносов строк.\n\n" + view.text
 		return view, nil
 	}
-	d.profile.FirstName, d.step = text, lastName
+	d.profile.FirstName, d.state = text, lastName
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -137,7 +139,7 @@ func (s *RegistrationService) setLastName(ctx context.Context, userID int64, tex
 	if !exists {
 		return screen{text: "Начните регистрацию.", start: true}, nil
 	}
-	if d.step != lastName {
+	if d.state != lastName {
 		return prompt(d), nil
 	}
 	text = strings.TrimSpace(text)
@@ -146,7 +148,7 @@ func (s *RegistrationService) setLastName(ctx context.Context, userID int64, tex
 		view.text = "Введите от 1 до 100 символов без команд и переносов строк.\n\n" + view.text
 		return view, nil
 	}
-	d.profile.LastName, d.step = text, surname
+	d.profile.LastName, d.state = text, surname
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -163,7 +165,7 @@ func (s *RegistrationService) setSurname(ctx context.Context, userID int64, text
 	if !exists {
 		return screen{text: "Начните регистрацию.", start: true}, nil
 	}
-	if d.step != surname {
+	if d.state != surname {
 		return prompt(d), nil
 	}
 	text = strings.TrimSpace(text)
@@ -172,7 +174,7 @@ func (s *RegistrationService) setSurname(ctx context.Context, userID int64, text
 		view.text = "Введите от 1 до 100 символов без команд и переносов строк.\n\n" + view.text
 		return view, nil
 	}
-	d.profile.Surname, d.step = text, confirmation
+	d.profile.Surname, d.state = text, confirmation
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -189,10 +191,10 @@ func (s *RegistrationService) skipSurname(ctx context.Context, userID int64) (sc
 	if !exists {
 		return screen{text: "Начните регистрацию.", start: true}, nil
 	}
-	if d.step != surname {
+	if d.state != surname {
 		return prompt(d), nil
 	}
-	d.profile.Surname, d.step = "", confirmation
+	d.profile.Surname, d.state = "", confirmation
 	if err := s.save(ctx, userID, d); err != nil {
 		return screen{}, err
 	}
@@ -209,7 +211,7 @@ func (s *RegistrationService) confirm(ctx context.Context, userID int64, usernam
 	if !exists {
 		return screen{text: "Начните регистрацию.", start: true}, nil
 	}
-	if d.step != confirmation {
+	if d.state != confirmation {
 		return prompt(d), nil
 	}
 	d.profile.Username = username
@@ -237,7 +239,7 @@ func (s *RegistrationService) preview(ctx context.Context, userID int64, usernam
 		return screen{}, err
 	}
 	if !exists {
-		d = draft{profile: domain.User{TelegramID: userID, Username: username, Role: "user"}, step: firstName}
+		d = conversation{state: firstName, draft: draft{profile: domain.User{TelegramID: userID, Username: username, Role: "user"}}}
 		if err := s.save(ctx, userID, d); err != nil {
 			return screen{}, err
 		}
@@ -249,8 +251,8 @@ func validName(value string) bool {
 		!strings.HasPrefix(value, "/") && !strings.ContainsFunc(value, unicode.IsControl)
 }
 
-func prompt(d draft) screen {
-	switch d.step {
+func prompt(d conversation) screen {
+	switch d.state {
 	case firstName:
 		return screen{text: "Для доступа к боту необходимо зарегистрироваться.\nВведите ваше имя.", cancel: true}
 	case lastName:
@@ -270,38 +272,39 @@ func prompt(d draft) screen {
 	}
 }
 
-var conversationStates = [...]fsm.StateID{"registration.first_name", "registration.last_name", "registration.surname", "registration.confirmation"}
-
 func reportStorageError(err error) { slog.Error("conversation storage failed", "error", err) }
-func (p *RegistrationService) load(ctx context.Context, userID int64) (draft, bool, error) {
-	state, err := p.machine.CurrentState(ctx, userID)
+func (f *RegistrationService) load(ctx context.Context, userID int64) (conversation, bool, error) {
+	state, err := f.machine.CurrentState(ctx, userID)
 	if err != nil {
-		return draft{}, false, err
+		return conversation{}, false, err
 	}
-	value, err := p.machine.GetData(ctx, userID, "session")
+	if state == "idle" {
+		return conversation{}, false, nil
+	}
+	switch state {
+	case firstName, lastName, surname, confirmation:
+	default:
+		return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
+	}
+	value, err := f.machine.GetData(ctx, userID, "session")
 	if errors.Is(err, fsm.ErrUserDataNotFound) {
-		return draft{}, false, nil
+		return conversation{}, false, nil
 	}
 	if err != nil {
-		return draft{}, false, err
+		return conversation{}, false, err
 	}
-	for index, expected := range conversationStates {
-		if state == expected {
-			value.step = step(index)
-			return value, true, nil
-		}
-	}
-	return draft{}, false, fmt.Errorf("unexpected conversation state %q", state)
+	return conversation{draft: value, state: state}, true, nil
 }
-func (p *RegistrationService) save(ctx context.Context, userID int64, value draft) error {
-	index := int(value.step)
-	if index < 0 || index >= len(conversationStates) {
-		return errors.New("invalid conversation step")
+func (f *RegistrationService) save(ctx context.Context, userID int64, value conversation) error {
+	switch value.state {
+	case firstName, lastName, surname, confirmation:
+	default:
+		return fmt.Errorf("invalid conversation state %q", value.state)
 	}
-	if err := p.machine.SetData(ctx, userID, "session", value); err != nil {
+	if err := f.machine.SetData(ctx, userID, "session", value.draft); err != nil {
 		return err
 	}
-	return p.machine.Transition(ctx, userID, conversationStates[index])
+	return f.machine.Transition(ctx, userID, value.state)
 }
 func (p *RegistrationService) clear(userID int64) {
 	if err := p.machine.Finish(context.Background(), userID); err != nil {

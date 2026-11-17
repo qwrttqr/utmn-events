@@ -18,27 +18,29 @@ import (
 	"utmn-events-bot/internal/fsm"
 )
 
-type eventStep int
-
 const (
-	eventTitle eventStep = iota
-	eventDescription
-	eventPhoto
-	eventLocation
-	eventStart
-	eventEnd
-	eventCapacity
-	eventTags
-	eventPreview
+	eventTitle       fsm.StateID = "admin.event_editing.title"
+	eventDescription fsm.StateID = "admin.event_editing.description"
+	eventPhoto       fsm.StateID = "admin.event_editing.photo"
+	eventLocation    fsm.StateID = "admin.event_editing.location"
+	eventStart       fsm.StateID = "admin.event_editing.start"
+	eventEnd         fsm.StateID = "admin.event_editing.end"
+	eventCapacity    fsm.StateID = "admin.event_editing.capacity"
+	eventTags        fsm.StateID = "admin.event_editing.tags"
+	eventPreview     fsm.StateID = "admin.event_editing.preview"
 )
 
 const eventDateLayout = "02.01.2006 15:04"
 
 type eventDraft struct {
 	event       domain.Event
-	step        eventStep
 	token       string
 	updateField domain.EventField
+}
+
+type conversation struct {
+	eventDraft
+	state fsm.StateID
 }
 
 type eventButton struct {
@@ -75,7 +77,7 @@ func (f *EventEditingService) Cancel(userID int64) {
 	f.clear(userID)
 }
 
-func cloneDraft(d eventDraft) eventDraft {
+func cloneDraft(d conversation) conversation {
 	d.event.Tags = slices.Clone(d.event.Tags)
 	if d.event.Capacity != nil {
 		capacity := *d.event.Capacity
@@ -84,42 +86,43 @@ func cloneDraft(d eventDraft) eventDraft {
 	return d
 }
 
-var editingConversationStates = [...]fsm.StateID{"admin.event_editing.title", "admin.event_editing.description", "admin.event_editing.photo", "admin.event_editing.location", "admin.event_editing.start", "admin.event_editing.end", "admin.event_editing.capacity", "admin.event_editing.tags", "admin.event_editing.preview"}
-
 func reportEditingStorageError(err error) {
 	slog.Error("conversation storage failed", "error", err)
 }
 
-func (f *EventEditingService) load(ctx context.Context, userID int64) (eventDraft, bool, error) {
+func (f *EventEditingService) load(ctx context.Context, userID int64) (conversation, bool, error) {
 	state, err := f.machine.CurrentState(ctx, userID)
 	if err != nil {
-		return eventDraft{}, false, err
+		return conversation{}, false, err
+	}
+	if state == "idle" {
+		return conversation{}, false, nil
+	}
+	switch state {
+	case eventTitle, eventDescription, eventPhoto, eventLocation, eventStart, eventEnd, eventCapacity, eventTags, eventPreview:
+	default:
+		return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
 	}
 	value, err := f.machine.GetData(ctx, userID, "session")
 	if errors.Is(err, fsm.ErrUserDataNotFound) {
-		return eventDraft{}, false, nil
+		return conversation{}, false, nil
 	}
 	if err != nil {
-		return eventDraft{}, false, err
+		return conversation{}, false, err
 	}
-	for index, expected := range editingConversationStates {
-		if state == expected {
-			value.step = eventStep(index)
-			return value, true, nil
-		}
-	}
-	return eventDraft{}, false, fmt.Errorf("unexpected conversation state %q", state)
+	return conversation{eventDraft: value, state: state}, true, nil
 }
 
-func (f *EventEditingService) save(ctx context.Context, userID int64, value eventDraft) error {
-	index := int(value.step)
-	if index < 0 || index >= len(editingConversationStates) {
-		return errors.New("invalid conversation step")
+func (f *EventEditingService) save(ctx context.Context, userID int64, value conversation) error {
+	switch value.state {
+	case eventTitle, eventDescription, eventPhoto, eventLocation, eventStart, eventEnd, eventCapacity, eventTags, eventPreview:
+	default:
+		return fmt.Errorf("invalid conversation state %q", value.state)
 	}
-	if err := f.machine.SetData(ctx, userID, "session", value); err != nil {
+	if err := f.machine.SetData(ctx, userID, "session", value.eventDraft); err != nil {
 		return err
 	}
-	return f.machine.Transition(ctx, userID, editingConversationStates[index])
+	return f.machine.Transition(ctx, userID, value.state)
 }
 
 func (f *EventEditingService) clear(userID int64) {
@@ -128,11 +131,12 @@ func (f *EventEditingService) clear(userID int64) {
 	}
 }
 
-func (f *EventEditingService) completeStep(ctx context.Context, userID int64, d eventDraft) (eventScreen, error) {
-	if d.step == eventStart {
-		d.step = eventEnd
+func (f *EventEditingService) completeStep(ctx context.Context, userID int64, d conversation) (eventScreen, error) {
+	d.token = rand.Text()
+	if d.state == eventStart {
+		d.state = eventEnd
 	} else {
-		d.step = eventPreview
+		d.state = eventPreview
 	}
 	if err := f.save(ctx, userID, d); err != nil {
 		return eventScreen{}, err
@@ -151,7 +155,7 @@ func (f *EventEditingService) cancelForm(ctx context.Context, userID int64, call
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
 	parts := strings.Split(callback, ":")
-	if len(parts) != 5 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != strconv.Itoa(int(d.step)) || parts[4] != "cancel" {
+	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != "cancel" {
 		return f.invalid(d, "Эта кнопка устарела."), nil
 	}
 
@@ -159,26 +163,26 @@ func (f *EventEditingService) cancelForm(ctx context.Context, userID int64, call
 	return eventScreen{text: "Изменения отменены.", buttons: []eventButton{{"Мероприятия", "admin:events"}}}, nil
 }
 
-func (f *EventEditingService) button(d eventDraft, text, action string) eventButton {
+func (f *EventEditingService) button(d conversation, text, action string) eventButton {
 	if text == "Пропустить" {
 		text = "Очистить"
 	}
-	return eventButton{text, fmt.Sprintf("admin:event_edit:%s:%d:%s", d.token, d.step, action)}
+	return eventButton{text, fmt.Sprintf("admin:event_edit:%s:%s", d.token, action)}
 }
 
-func (f *EventEditingService) prompt(d eventDraft) eventScreen {
+func (f *EventEditingService) prompt(d conversation) eventScreen {
 	var view eventScreen
-	switch d.step {
+	switch d.state {
 	case eventTitle:
-		view = f.titlePrompt(d)
+		view = eventScreen{text: "Введите новое название."}
 	case eventDescription:
 		view = f.descriptionPrompt(d)
 	case eventPhoto:
 		view = f.photoPrompt(d)
 	case eventLocation:
-		view = f.locationPrompt(d)
+		view = eventScreen{text: "Введите место проведения (адрес, аудитория)."}
 	case eventStart:
-		view = f.startPrompt(d)
+		view = f.startPrompt()
 	case eventEnd:
 		view = f.endPrompt(d)
 	case eventCapacity:
@@ -193,7 +197,7 @@ func (f *EventEditingService) prompt(d eventDraft) eventScreen {
 	return view
 }
 
-func (f *EventEditingService) invalid(d eventDraft, message string) eventScreen {
+func (f *EventEditingService) invalid(d conversation, message string) eventScreen {
 	view := f.prompt(d)
 	view.text = message + "\n\n" + view.text
 	return view
@@ -209,7 +213,7 @@ func (f *EventEditingService) setTitle(ctx context.Context, userID int64, text s
 	if !exists {
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
-	if d.step != eventTitle {
+	if d.state != eventTitle {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 	text = strings.TrimSpace(text)
@@ -224,10 +228,6 @@ func (f *EventEditingService) setTitle(ctx context.Context, userID int64, text s
 	return f.completeStep(ctx, userID, d)
 }
 
-func (f *EventEditingService) titlePrompt(d eventDraft) eventScreen {
-	return eventScreen{text: "Введите новое название."}
-}
-
 func (f *EventEditingService) setDescription(ctx context.Context, userID int64, text string) (eventScreen, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -238,7 +238,7 @@ func (f *EventEditingService) setDescription(ctx context.Context, userID int64, 
 	if !exists {
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
-	if d.step != eventDescription {
+	if d.state != eventDescription {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 	text = strings.TrimSpace(text)
@@ -264,10 +264,10 @@ func (f *EventEditingService) skipDescription(ctx context.Context, userID int64,
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
 	parts := strings.Split(callback, ":")
-	if len(parts) != 5 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != strconv.Itoa(int(d.step)) || parts[4] != "skip" {
+	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != "skip" {
 		return f.invalid(d, "Эта кнопка устарела."), nil
 	}
-	if d.step != eventDescription {
+	if d.state != eventDescription {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 
@@ -275,7 +275,7 @@ func (f *EventEditingService) skipDescription(ctx context.Context, userID int64,
 	return f.completeStep(ctx, userID, d)
 }
 
-func (f *EventEditingService) descriptionPrompt(d eventDraft) eventScreen {
+func (f *EventEditingService) descriptionPrompt(d conversation) eventScreen {
 	return eventScreen{text: "Введите описание мероприятия.", buttons: []eventButton{f.button(d, "Пропустить", "skip")}}
 }
 
@@ -289,7 +289,7 @@ func (f *EventEditingService) setPhoto(ctx context.Context, userID int64, photo 
 	if !exists {
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
-	if d.step != eventPhoto {
+	if d.state != eventPhoto {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 
@@ -311,10 +311,10 @@ func (f *EventEditingService) skipPhoto(ctx context.Context, userID int64, callb
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
 	parts := strings.Split(callback, ":")
-	if len(parts) != 5 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != strconv.Itoa(int(d.step)) || parts[4] != "skip" {
+	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != "skip" {
 		return f.invalid(d, "Эта кнопка устарела."), nil
 	}
-	if d.step != eventPhoto {
+	if d.state != eventPhoto {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 
@@ -322,7 +322,7 @@ func (f *EventEditingService) skipPhoto(ctx context.Context, userID int64, callb
 	return f.completeStep(ctx, userID, d)
 }
 
-func (f *EventEditingService) photoPrompt(d eventDraft) eventScreen {
+func (f *EventEditingService) photoPrompt(d conversation) eventScreen {
 	return eventScreen{text: "Отправьте фото мероприятия.", buttons: []eventButton{f.button(d, "Пропустить", "skip")}}
 }
 
@@ -336,7 +336,7 @@ func (f *EventEditingService) setLocation(ctx context.Context, userID int64, tex
 	if !exists {
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
-	if d.step != eventLocation {
+	if d.state != eventLocation {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 	text = strings.TrimSpace(text)
@@ -351,10 +351,6 @@ func (f *EventEditingService) setLocation(ctx context.Context, userID int64, tex
 	return f.completeStep(ctx, userID, d)
 }
 
-func (f *EventEditingService) locationPrompt(eventDraft) eventScreen {
-	return eventScreen{text: "Введите место проведения (адрес, аудитория)."}
-}
-
 func (f *EventEditingService) setStart(ctx context.Context, userID int64, text string) (eventScreen, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -365,7 +361,7 @@ func (f *EventEditingService) setStart(ctx context.Context, userID int64, text s
 	if !exists {
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
-	if d.step != eventStart {
+	if d.state != eventStart {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 	text = strings.TrimSpace(text)
@@ -394,7 +390,7 @@ func (f *EventEditingService) setEnd(ctx context.Context, userID int64, text str
 	if !exists {
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
-	if d.step != eventEnd {
+	if d.state != eventEnd {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 	text = strings.TrimSpace(text)
@@ -413,12 +409,12 @@ func (f *EventEditingService) setEnd(ctx context.Context, userID int64, text str
 	return f.completeStep(ctx, userID, d)
 }
 
-func (f *EventEditingService) startPrompt(eventDraft) eventScreen {
+func (f *EventEditingService) startPrompt() eventScreen {
 	example := f.now().In(f.location).Truncate(time.Minute).Add(time.Minute)
 	return eventScreen{text: "Введите дату и время начала: ДД.ММ.ГГГГ ЧЧ:ММ.\nНапример: " + example.Format(eventDateLayout)}
 }
 
-func (f *EventEditingService) endPrompt(d eventDraft) eventScreen {
+func (f *EventEditingService) endPrompt(d conversation) eventScreen {
 	example := d.event.StartsAt.In(f.location).Add(time.Hour)
 	return eventScreen{text: "Введите дату и время окончания: ДД.ММ.ГГГГ ЧЧ:ММ.\nНапример: " + example.Format(eventDateLayout)}
 }
@@ -433,7 +429,7 @@ func (f *EventEditingService) setCapacity(ctx context.Context, userID int64, tex
 	if !exists {
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
-	if d.step != eventCapacity {
+	if d.state != eventCapacity {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 	text = strings.TrimSpace(text)
@@ -461,10 +457,10 @@ func (f *EventEditingService) unlimitedCapacity(ctx context.Context, userID int6
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
 	parts := strings.Split(callback, ":")
-	if len(parts) != 5 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != strconv.Itoa(int(d.step)) || parts[4] != "skip" {
+	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != "skip" {
 		return f.invalid(d, "Эта кнопка устарела."), nil
 	}
-	if d.step != eventCapacity {
+	if d.state != eventCapacity {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 
@@ -472,7 +468,7 @@ func (f *EventEditingService) unlimitedCapacity(ctx context.Context, userID int6
 	return f.completeStep(ctx, userID, d)
 }
 
-func (f *EventEditingService) capacityPrompt(d eventDraft) eventScreen {
+func (f *EventEditingService) capacityPrompt(d conversation) eventScreen {
 	return eventScreen{text: "Введите максимальное количество участников.", buttons: []eventButton{f.button(d, "Без ограничений", "skip")}}
 }
 
@@ -486,7 +482,7 @@ func (f *EventEditingService) setTags(ctx context.Context, userID int64, text st
 	if !exists {
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
-	if d.step != eventTags {
+	if d.state != eventTags {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 	text = strings.TrimSpace(text)
@@ -528,10 +524,10 @@ func (f *EventEditingService) skipTags(ctx context.Context, userID int64, callba
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
 	parts := strings.Split(callback, ":")
-	if len(parts) != 5 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != strconv.Itoa(int(d.step)) || parts[4] != "skip" {
+	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != "skip" {
 		return f.invalid(d, "Эта кнопка устарела."), nil
 	}
-	if d.step != eventTags {
+	if d.state != eventTags {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 
@@ -539,7 +535,7 @@ func (f *EventEditingService) skipTags(ctx context.Context, userID int64, callba
 	return f.completeStep(ctx, userID, d)
 }
 
-func (f *EventEditingService) tagsPrompt(d eventDraft) eventScreen {
+func (f *EventEditingService) tagsPrompt(d conversation) eventScreen {
 	return eventScreen{text: "Введите теги через точку с запятой: лекция; спорт.", buttons: []eventButton{f.button(d, "Пропустить", "skip")}}
 }
 
@@ -554,10 +550,10 @@ func (f *EventEditingService) confirmEvent(ctx context.Context, userID int64, ca
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
 	parts := strings.Split(callback, ":")
-	if len(parts) != 5 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != strconv.Itoa(int(d.step)) || parts[4] != "save" {
+	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != "save" {
 		return f.invalid(d, "Эта кнопка устарела."), nil
 	}
-	if d.step != eventPreview {
+	if d.state != eventPreview {
 		return f.invalid(d, "Этот шаг уже завершён."), nil
 	}
 
@@ -583,15 +579,16 @@ func (f *EventEditingService) confirmEvent(ctx context.Context, userID int64, ca
 	return eventScreen{text: fmt.Sprintf("Мероприятие «%s» (№%d) обновлено.", d.event.Title, id), buttons: []eventButton{{"Мероприятия", "admin:events"}}}, nil
 }
 
-func (f *EventEditingService) reenterDates(ctx context.Context, userID int64, d eventDraft) (eventScreen, error) {
-	d.step = eventStart
+func (f *EventEditingService) reenterDates(ctx context.Context, userID int64, d conversation) (eventScreen, error) {
+	d.token = rand.Text()
+	d.state = eventStart
 	if err := f.save(ctx, userID, d); err != nil {
 		return eventScreen{}, err
 	}
 	return f.invalid(d, "Время начала уже прошло. Введите новую дату и время."), nil
 }
 
-func (f *EventEditingService) previewPrompt(d eventDraft) eventScreen {
+func (f *EventEditingService) previewPrompt(d conversation) eventScreen {
 	capacity := "без ограничений"
 	if d.event.Capacity != nil {
 		capacity = strconv.Itoa(int(*d.event.Capacity))
@@ -604,7 +601,7 @@ func (f *EventEditingService) previewPrompt(d eventDraft) eventScreen {
 }
 
 func (f *EventEditingService) beginEdit(ctx context.Context, userID int64, event domain.Event, field domain.EventField) (eventScreen, error) {
-	steps := map[domain.EventField]eventStep{
+	steps := map[domain.EventField]fsm.StateID{
 		domain.EventTitle: eventTitle, domain.EventDescription: eventDescription,
 		domain.EventPhoto: eventPhoto, domain.EventLocation: eventLocation,
 		domain.EventDates: eventStart, domain.EventCapacity: eventCapacity, domain.EventTags: eventTags,
@@ -616,7 +613,7 @@ func (f *EventEditingService) beginEdit(ctx context.Context, userID int64, event
 	if f.repo == nil {
 		return eventScreen{}, errors.New("event service is not configured")
 	}
-	d := cloneDraft(eventDraft{event: event, step: step, token: rand.Text(), updateField: field})
+	d := cloneDraft(conversation{state: step, eventDraft: eventDraft{event: event, token: rand.Text(), updateField: field}})
 	f.mu.Lock()
 	if err := f.save(ctx, userID, d); err != nil {
 		f.mu.Unlock()
@@ -627,7 +624,7 @@ func (f *EventEditingService) beginEdit(ctx context.Context, userID int64, event
 	return view, nil
 }
 
-func (f *EventEditingService) inState(userID int64, step eventStep) bool {
+func (f *EventEditingService) inState(userID int64, step fsm.StateID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	state, err := f.machine.CurrentState(context.Background(), userID)
@@ -635,10 +632,10 @@ func (f *EventEditingService) inState(userID int64, step eventStep) bool {
 		reportEditingStorageError(err)
 		return false
 	}
-	return state == editingConversationStates[step]
+	return state == step
 }
 
-func (f *EventEditingService) snapshot(ctx context.Context, userID int64) (*eventDraft, error) {
+func (f *EventEditingService) snapshot(ctx context.Context, userID int64) (*conversation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	d, exists, err := f.load(ctx, userID)
@@ -652,12 +649,12 @@ func (f *EventEditingService) snapshot(ctx context.Context, userID int64) (*even
 	return &saved, nil
 }
 
-func (f *EventEditingService) restore(ctx context.Context, userID int64, saved eventDraft) (eventScreen, eventDraft, error) {
+func (f *EventEditingService) restore(ctx context.Context, userID int64, saved conversation) (eventScreen, conversation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	d := cloneDraft(saved)
 	if err := f.save(ctx, userID, d); err != nil {
-		return eventScreen{}, eventDraft{}, err
+		return eventScreen{}, conversation{}, err
 	}
 	return f.prompt(d), d, nil
 }
@@ -673,7 +670,7 @@ func (f *EventEditingService) staleCallback(ctx context.Context, userID int64, c
 		return eventScreen{text: "Нет активного редактирования мероприятия."}, nil
 	}
 	parts := strings.Split(callback, ":")
-	if len(parts) != 5 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token || parts[3] != strconv.Itoa(int(d.step)) {
+	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event_edit" || parts[2] != d.token {
 		return f.invalid(d, "Эта кнопка устарела."), nil
 	}
 	return f.prompt(d), nil

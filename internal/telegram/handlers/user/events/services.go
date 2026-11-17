@@ -32,24 +32,26 @@ type RegistrationRepository interface {
 	Unenroll(context.Context, int64, int64) error
 }
 
-type mode int
-
 const (
-	all mode = iota
-	mine
-	chooseTags
-	results
-	card
-	cancelEnrollment
+	all              fsm.StateID = "user.events.all"
+	mine             fsm.StateID = "user.events.mine"
+	chooseTags       fsm.StateID = "user.events.choose_tags"
+	results          fsm.StateID = "user.events.results"
+	card             fsm.StateID = "user.events.card"
+	cancelEnrollment fsm.StateID = "user.events.cancel"
 )
 
 type session struct {
 	token    string
-	mode     mode
 	page     int
 	eventID  int64
 	selected map[int64]string
 	tags     []domain.Tag
+}
+
+type conversation struct {
+	session
+	state fsm.StateID
 }
 
 type EventsService struct {
@@ -72,7 +74,7 @@ func NewService(repo Repository, tags TagRepository, registrations RegistrationR
 
 func (f *EventsService) Cancel(id int64) { f.mu.Lock(); defer f.mu.Unlock(); f.clear(id) }
 
-func cloneSession(s session) session {
+func cloneSession(s conversation) conversation {
 	s.selected = maps.Clone(s.selected)
 	s.tags = slices.Clone(s.tags)
 	return s
@@ -80,13 +82,13 @@ func cloneSession(s session) session {
 
 func (f *EventsService) process(ctx context.Context, userID int64, callback string) (navigation.Page, error) {
 	if callback == "user:events" {
-		return f.browse(ctx, userID, callback)
+		return f.browse(ctx, userID)
 	}
 	if callback == "user:registrations" {
-		return f.myRegistrations(ctx, userID, callback)
+		return f.myRegistrations(ctx, userID)
 	}
 	if callback == "user:search" {
-		return f.chooseTags(ctx, userID, callback)
+		return f.chooseTags(ctx, userID)
 	}
 	parts := strings.Split(callback, ":")
 	if len(parts) != 4 {
@@ -131,7 +133,6 @@ func (f *EventsService) page(ctx context.Context, userID int64, callback string)
 		return navigation.Page{}, err
 	}
 	s = cloneSession(s)
-	notice := ""
 
 	parts := strings.Split(callback, ":")
 	if !exists || len(parts) != 4 || parts[2] != s.token {
@@ -139,7 +140,7 @@ func (f *EventsService) page(ctx context.Context, userID int64, callback string)
 	}
 	action := parts[3]
 
-	if strings.HasPrefix(action, "page") && (s.mode == all || s.mode == mine || s.mode == results || s.mode == chooseTags) {
+	if strings.HasPrefix(action, "page") && (s.state == all || s.state == mine || s.state == results || s.state == chooseTags) {
 		if page, ok := pagination.Move(s.page, action); ok {
 			s.page = page
 		}
@@ -150,16 +151,12 @@ func (f *EventsService) page(ctx context.Context, userID int64, callback string)
 	if err != nil {
 		return navigation.Page{}, err
 	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
-	}
+
 	if err := f.save(ctx, userID, s); err != nil {
 		return navigation.Page{}, err
 	}
 	return page, nil
 }
-
-var conversationStates = [...]fsm.StateID{"user.events.all", "user.events.mine", "user.events.choose_tags", "user.events.results", "user.events.card", "user.events.cancel"}
 
 func (f *EventsService) open(ctx context.Context, userID int64, callback string) (navigation.Page, error) {
 	f.mu.Lock()
@@ -169,7 +166,6 @@ func (f *EventsService) open(ctx context.Context, userID int64, callback string)
 		return navigation.Page{}, err
 	}
 	s = cloneSession(s)
-	notice := ""
 
 	parts := strings.Split(callback, ":")
 	if !exists || len(parts) != 4 || parts[2] != s.token {
@@ -182,7 +178,7 @@ func (f *EventsService) open(ctx context.Context, userID int64, callback string)
 		if err != nil || id <= 0 {
 			return navigation.Page{}, errors.New("invalid event ID")
 		}
-		s.eventID, s.mode = id, card
+		s.eventID, s.state = id, card
 	}
 
 	s.token = rand.Text()
@@ -190,9 +186,7 @@ func (f *EventsService) open(ctx context.Context, userID int64, callback string)
 	if err != nil {
 		return navigation.Page{}, err
 	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
-	}
+
 	if err := f.save(ctx, userID, s); err != nil {
 		return navigation.Page{}, err
 	}
@@ -207,7 +201,6 @@ func (f *EventsService) toggleTag(ctx context.Context, userID int64, callback st
 		return navigation.Page{}, err
 	}
 	s = cloneSession(s)
-	notice := ""
 
 	parts := strings.Split(callback, ":")
 	if !exists || len(parts) != 4 || parts[2] != s.token {
@@ -215,7 +208,7 @@ func (f *EventsService) toggleTag(ctx context.Context, userID int64, callback st
 	}
 	action := parts[3]
 
-	if strings.HasPrefix(action, "toggle") && s.mode == chooseTags {
+	if strings.HasPrefix(action, "toggle") && s.state == chooseTags {
 		id, _ := strconv.ParseInt(strings.TrimPrefix(action, "toggle"), 10, 64)
 		for _, tag := range s.tags {
 			if tag.ID != id {
@@ -235,9 +228,6 @@ func (f *EventsService) toggleTag(ctx context.Context, userID int64, callback st
 	if err != nil {
 		return navigation.Page{}, err
 	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
-	}
 	if err := f.save(ctx, userID, s); err != nil {
 		return navigation.Page{}, err
 	}
@@ -252,7 +242,6 @@ func (f *EventsService) clearTags(ctx context.Context, userID int64, callback st
 		return navigation.Page{}, err
 	}
 	s = cloneSession(s)
-	notice := ""
 
 	parts := strings.Split(callback, ":")
 	if !exists || len(parts) != 4 || parts[2] != s.token {
@@ -260,7 +249,7 @@ func (f *EventsService) clearTags(ctx context.Context, userID int64, callback st
 	}
 	action := parts[3]
 
-	if action == "clear" && s.mode == chooseTags {
+	if action == "clear" && s.state == chooseTags {
 		s.selected = make(map[int64]string)
 	}
 
@@ -268,9 +257,6 @@ func (f *EventsService) clearTags(ctx context.Context, userID int64, callback st
 	page, err := f.render(ctx, userID, &s)
 	if err != nil {
 		return navigation.Page{}, err
-	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
 	}
 	if err := f.save(ctx, userID, s); err != nil {
 		return navigation.Page{}, err
@@ -294,11 +280,11 @@ func (f *EventsService) search(ctx context.Context, userID int64, callback strin
 	}
 	action := parts[3]
 
-	if action == "search" && s.mode == chooseTags {
+	if action == "search" && s.state == chooseTags {
 		if len(s.selected) == 0 {
 			notice = "Выберите хотя бы один тег."
 		} else {
-			s.mode, s.page = results, 0
+			s.state, s.page = results, 0
 		}
 	}
 
@@ -332,7 +318,7 @@ func (f *EventsService) enroll(ctx context.Context, userID int64, callback strin
 	}
 	action := parts[3]
 
-	if action == "enroll" && s.mode == card {
+	if action == "enroll" && s.state == card {
 		err := f.registrations.Enroll(ctx, s.eventID, userID)
 		switch {
 		case err == nil:
@@ -368,7 +354,6 @@ func (f *EventsService) cancelEnrollment(ctx context.Context, userID int64, call
 		return navigation.Page{}, err
 	}
 	s = cloneSession(s)
-	notice := ""
 
 	parts := strings.Split(callback, ":")
 	if !exists || len(parts) != 4 || parts[2] != s.token {
@@ -376,17 +361,14 @@ func (f *EventsService) cancelEnrollment(ctx context.Context, userID int64, call
 	}
 	action := parts[3]
 
-	if action == "cancel" && s.mode == card {
-		s.mode = cancelEnrollment
+	if action == "cancel" && s.state == card {
+		s.state = cancelEnrollment
 	}
 
 	s.token = rand.Text()
 	page, err := f.render(ctx, userID, &s)
 	if err != nil {
 		return navigation.Page{}, err
-	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
 	}
 	if err := f.save(ctx, userID, s); err != nil {
 		return navigation.Page{}, err
@@ -402,7 +384,6 @@ func (f *EventsService) keepEnrollment(ctx context.Context, userID int64, callba
 		return navigation.Page{}, err
 	}
 	s = cloneSession(s)
-	notice := ""
 
 	parts := strings.Split(callback, ":")
 	if !exists || len(parts) != 4 || parts[2] != s.token {
@@ -410,17 +391,14 @@ func (f *EventsService) keepEnrollment(ctx context.Context, userID int64, callba
 	}
 	action := parts[3]
 
-	if action == "keep" && s.mode == cancelEnrollment {
-		s.mode = card
+	if action == "keep" && s.state == cancelEnrollment {
+		s.state = card
 	}
 
 	s.token = rand.Text()
 	page, err := f.render(ctx, userID, &s)
 	if err != nil {
 		return navigation.Page{}, err
-	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
 	}
 	if err := f.save(ctx, userID, s); err != nil {
 		return navigation.Page{}, err
@@ -444,11 +422,11 @@ func (f *EventsService) confirmCancellation(ctx context.Context, userID int64, c
 	}
 	action := parts[3]
 
-	if action == "confirm" && s.mode == cancelEnrollment {
+	if action == "confirm" && s.state == cancelEnrollment {
 		if err := f.registrations.Unenroll(ctx, s.eventID, userID); err != nil {
 			return navigation.Page{}, err
 		}
-		s.mode, notice = card, "Запись на мероприятие отменена."
+		s.state, notice = card, "Запись на мероприятие отменена."
 	}
 
 	s.token = rand.Text()
@@ -473,7 +451,6 @@ func (f *EventsService) staleCallback(ctx context.Context, userID int64, callbac
 		return navigation.Page{}, err
 	}
 	s = cloneSession(s)
-	notice := ""
 
 	parts := strings.Split(callback, ":")
 	if !exists || len(parts) != 4 || parts[2] != s.token {
@@ -485,8 +462,22 @@ func (f *EventsService) staleCallback(ctx context.Context, userID int64, callbac
 	if err != nil {
 		return navigation.Page{}, err
 	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
+	if err := f.save(ctx, userID, s); err != nil {
+		return navigation.Page{}, err
+	}
+	return page, nil
+}
+
+func (f *EventsService) browse(ctx context.Context, userID int64) (navigation.Page, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	s := conversation{state: all, session: session{selected: make(map[int64]string)}}
+
+	s.token = rand.Text()
+	page, err := f.render(ctx, userID, &s)
+	if err != nil {
+		return navigation.Page{}, err
 	}
 	if err := f.save(ctx, userID, s); err != nil {
 		return navigation.Page{}, err
@@ -494,20 +485,16 @@ func (f *EventsService) staleCallback(ctx context.Context, userID int64, callbac
 	return page, nil
 }
 
-func (f *EventsService) browse(ctx context.Context, userID int64, callback string) (navigation.Page, error) {
+func (f *EventsService) myRegistrations(ctx context.Context, userID int64) (navigation.Page, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	notice := ""
 
-	s := session{mode: all, selected: make(map[int64]string)}
+	s := conversation{state: mine, session: session{selected: make(map[int64]string)}}
 
 	s.token = rand.Text()
 	page, err := f.render(ctx, userID, &s)
 	if err != nil {
 		return navigation.Page{}, err
-	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
 	}
 	if err := f.save(ctx, userID, s); err != nil {
 		return navigation.Page{}, err
@@ -515,41 +502,16 @@ func (f *EventsService) browse(ctx context.Context, userID int64, callback strin
 	return page, nil
 }
 
-func (f *EventsService) myRegistrations(ctx context.Context, userID int64, callback string) (navigation.Page, error) {
+func (f *EventsService) chooseTags(ctx context.Context, userID int64) (navigation.Page, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	notice := ""
 
-	s := session{mode: mine, selected: make(map[int64]string)}
+	s := conversation{state: chooseTags, session: session{selected: make(map[int64]string)}}
 
 	s.token = rand.Text()
 	page, err := f.render(ctx, userID, &s)
 	if err != nil {
 		return navigation.Page{}, err
-	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
-	}
-	if err := f.save(ctx, userID, s); err != nil {
-		return navigation.Page{}, err
-	}
-	return page, nil
-}
-
-func (f *EventsService) chooseTags(ctx context.Context, userID int64, callback string) (navigation.Page, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	notice := ""
-
-	s := session{mode: chooseTags, selected: make(map[int64]string)}
-
-	s.token = rand.Text()
-	page, err := f.render(ctx, userID, &s)
-	if err != nil {
-		return navigation.Page{}, err
-	}
-	if notice != "" {
-		page.Text = notice + "\n\n" + page.Text
 	}
 	if err := f.save(ctx, userID, s); err != nil {
 		return navigation.Page{}, err
@@ -558,35 +520,38 @@ func (f *EventsService) chooseTags(ctx context.Context, userID int64, callback s
 }
 
 func reportStorageError(err error) { slog.Error("conversation storage failed", "error", err) }
-func (f *EventsService) load(ctx context.Context, userID int64) (session, bool, error) {
+func (f *EventsService) load(ctx context.Context, userID int64) (conversation, bool, error) {
 	state, err := f.machine.CurrentState(ctx, userID)
 	if err != nil {
-		return session{}, false, err
+		return conversation{}, false, err
+	}
+	if state == "idle" {
+		return conversation{}, false, nil
+	}
+	switch state {
+	case all, mine, chooseTags, results, card, cancelEnrollment:
+	default:
+		return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
 	}
 	value, err := f.machine.GetData(ctx, userID, "session")
 	if errors.Is(err, fsm.ErrUserDataNotFound) {
-		return session{}, false, nil
+		return conversation{}, false, nil
 	}
 	if err != nil {
-		return session{}, false, err
+		return conversation{}, false, err
 	}
-	for index, expected := range conversationStates {
-		if state == expected {
-			value.mode = mode(index)
-			return value, true, nil
-		}
-	}
-	return session{}, false, fmt.Errorf("unexpected conversation state %q", state)
+	return conversation{session: value, state: state}, true, nil
 }
-func (f *EventsService) save(ctx context.Context, userID int64, value session) error {
-	index := int(value.mode)
-	if index < 0 || index >= len(conversationStates) {
-		return errors.New("invalid conversation step")
+func (f *EventsService) save(ctx context.Context, userID int64, value conversation) error {
+	switch value.state {
+	case all, mine, chooseTags, results, card, cancelEnrollment:
+	default:
+		return fmt.Errorf("invalid conversation state %q", value.state)
 	}
-	if err := f.machine.SetData(ctx, userID, "session", value); err != nil {
+	if err := f.machine.SetData(ctx, userID, "session", value.session); err != nil {
 		return err
 	}
-	return f.machine.Transition(ctx, userID, conversationStates[index])
+	return f.machine.Transition(ctx, userID, value.state)
 }
 func (f *EventsService) clear(userID int64) {
 	if err := f.machine.Finish(context.Background(), userID); err != nil {
@@ -594,9 +559,9 @@ func (f *EventsService) clear(userID int64) {
 	}
 }
 
-func (f *EventsService) render(ctx context.Context, userID int64, s *session) (navigation.Page, error) {
-	page := navigation.Page{Key: fmt.Sprintf("user:events:%d:%d", s.mode, s.eventID)}
-	switch s.mode {
+func (f *EventsService) render(ctx context.Context, userID int64, s *conversation) (navigation.Page, error) {
+	page := navigation.Page{Key: fmt.Sprintf("user:events:%s:%d", s.state, s.eventID)}
+	switch s.state {
 	case chooseTags:
 		tags, err := f.tags.List(ctx, pagination.Size+1, s.page*pagination.Size)
 		if err != nil {
@@ -613,12 +578,12 @@ func (f *EventsService) render(ctx context.Context, userID int64, s *session) (n
 		}
 		page.Keyboard = tagsKeyboard(*s, tags, more)
 	case all, mine, results:
-		filter := domain.EventFilter{UpcomingOnly: s.mode != mine}
+		filter := domain.EventFilter{UpcomingOnly: s.state != mine}
 		label := "Предстоящие мероприятия"
-		if s.mode == mine {
+		if s.state == mine {
 			filter.UserTelegramID, label = userID, "Мои записи"
 		}
-		if s.mode == results {
+		if s.state == results {
 			if len(s.selected) == 0 {
 				return navigation.Page{}, fmt.Errorf("tag search requires at least one tag")
 			}
@@ -654,7 +619,7 @@ func (f *EventsService) render(ctx context.Context, userID int64, s *session) (n
 			return navigation.Page{}, err
 		}
 		page.Keyboard = cardKeyboard(*s, event, enrolled, f.now())
-		if s.mode == cancelEnrollment {
+		if s.state == cancelEnrollment {
 			page.Text = fmt.Sprintf("Отменить вашу запись на «%s» (№%d)?", event.Title, event.ID)
 
 		} else {
@@ -686,15 +651,15 @@ func (f *EventsService) render(ctx context.Context, userID int64, s *session) (n
 	page.Restore = func(ctx context.Context) (navigation.Page, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		copy := cloneSession(saved)
-		copy.token = rand.Text()
+		copiedSession := cloneSession(saved)
+		copiedSession.token = rand.Text()
 		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		page, err := f.render(dbCtx, userID, &copy)
+		page, err := f.render(dbCtx, userID, &copiedSession)
 		if err != nil {
 			return navigation.Page{}, err
 		}
-		if err := f.save(ctx, userID, copy); err != nil {
+		if err := f.save(ctx, userID, copiedSession); err != nil {
 			return navigation.Page{}, err
 		}
 		return page, nil

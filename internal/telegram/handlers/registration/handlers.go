@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"utmn-events-bot/internal/fsm"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
@@ -35,7 +36,7 @@ func Register(b *bot.Bot, service *RegistrationService) {
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return h.matchMessage(confirmation, update) }, h.Preview)
 }
 
-func (h *Handler) matchMessage(state step, update *models.Update) bool {
+func (h *Handler) matchMessage(state fsm.StateID, update *models.Update) bool {
 	m := update.Message
 	if m == nil || m.From == nil {
 		return false

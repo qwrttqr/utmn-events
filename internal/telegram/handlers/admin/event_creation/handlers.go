@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"utmn-events-bot/internal/fsm"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -51,7 +52,7 @@ func Register(b *bot.Bot, service *EventCreationService, guard bot.Middleware, b
 			return false
 		}
 		parts := strings.Split(q.Data, ":")
-		return len(parts) == 5 && parts[0] == "admin" && parts[1] == "event" && parts[4] == "cancel"
+		return len(parts) == 4 && parts[0] == "admin" && parts[1] == "event" && parts[3] == "cancel"
 	}, flow.Cancel, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:event:", bot.MatchTypePrefix, flow.StaleCallback, guard)
 }
@@ -318,7 +319,7 @@ func (f *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 	f.show(ctx, b, query.From.ID, query.Message.Message.Chat.ID, view)
 }
 
-func (f *Handler) matchMessageState(step eventStep, update *models.Update) bool {
+func (f *Handler) matchMessageState(step fsm.StateID, update *models.Update) bool {
 	m := update.Message
 	if m == nil || m.From == nil {
 		return false
@@ -330,13 +331,13 @@ func (f *Handler) matchMessageState(step eventStep, update *models.Update) bool 
 	return f.service.inState(m.From.ID, step)
 }
 
-func (f *Handler) matchCallbackState(step eventStep, action string, update *models.Update) bool {
+func (f *Handler) matchCallbackState(step fsm.StateID, action string, update *models.Update) bool {
 	q := update.CallbackQuery
 	if q == nil || !strings.HasPrefix(q.Data, "admin:event:") {
 		return false
 	}
 	parts := strings.Split(q.Data, ":")
-	return len(parts) == 5 && parts[4] == action && f.service.inState(q.From.ID, step)
+	return len(parts) == 4 && parts[3] == action && f.service.inState(q.From.ID, step)
 }
 
 func answerEventCallback(ctx context.Context, b *bot.Bot, id string) {
@@ -356,13 +357,13 @@ func (f *Handler) show(ctx context.Context, b *bot.Bot, userID, chatID int64, vi
 	}
 }
 
-func (f *Handler) page(userID int64, view eventScreen, snapshot *eventDraft) navigation.Page {
+func (f *Handler) page(userID int64, view eventScreen, snapshot *conversation) navigation.Page {
 	page := navigation.Page{Key: "admin:event:result", Text: view.text, PhotoFileID: view.photoID, Keyboard: eventKeyboard(view), Admin: true, ClearHistory: snapshot == nil}
 	if snapshot == nil {
 		return page
 	}
 	saved := cloneDraft(*snapshot)
-	page.Key = fmt.Sprintf("admin:event:%s:%d", saved.token, saved.step)
+	page.Key = fmt.Sprintf("admin:event:%s:%s", saved.token, saved.state)
 	page.Restore = func(ctx context.Context) (navigation.Page, error) {
 		view, d, err := f.service.restore(ctx, userID, saved)
 		if err != nil {
