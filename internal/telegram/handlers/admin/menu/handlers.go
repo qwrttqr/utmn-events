@@ -18,7 +18,6 @@ func RegisterCommand(b *bot.Bot, guard bot.Middleware, beforeOpen func(int64)) {
 }
 func RegisterCallbacks(b *bot.Bot, guard bot.Middleware, beforeOpen func(int64)) {
 	h := &Handler{beforeOpen: beforeOpen}
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:announcement", bot.MatchTypeExact, h.Announcement, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:menu", bot.MatchTypeExact, h.Menu, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:", bot.MatchTypePrefix, h.Unknown, guard)
 }
@@ -62,22 +61,5 @@ func (h *Handler) Unknown(ctx context.Context, b *bot.Bot, update *models.Update
 	}
 	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, unknownPage(q.Data)); err != nil {
 		slog.ErrorContext(ctx, "show admin page failed", "error", err)
-	}
-}
-
-func (h *Handler) Announcement(ctx context.Context, b *bot.Bot, update *models.Update) {
-	q := update.CallbackQuery
-	if q == nil {
-		return
-	}
-	h.beforeOpen(q.From.ID)
-	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: q.ID}); err != nil {
-		slog.ErrorContext(ctx, "answer admin callback failed", "error", err)
-	}
-	if q.Message.Message == nil {
-		return
-	}
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, navigation.Page{Key: "admin:announcement", Admin: true, Text: "Создание объявления пока недоступно."}); err != nil {
-		slog.ErrorContext(ctx, "show announcement page failed", "error", err)
 	}
 }

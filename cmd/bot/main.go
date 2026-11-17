@@ -11,6 +11,7 @@ import (
 	"utmn-events-bot/internal/config"
 	"utmn-events-bot/internal/repositories"
 	"utmn-events-bot/internal/telegram/handlers/admin"
+	"utmn-events-bot/internal/telegram/handlers/admin/announcements"
 	"utmn-events-bot/internal/telegram/handlers/admin/event_creation"
 	"utmn-events-bot/internal/telegram/handlers/admin/event_editing"
 	"utmn-events-bot/internal/telegram/handlers/admin/event_management"
@@ -98,12 +99,14 @@ func run() error {
 	navigator.Register(b)
 	eventManagement := event_management.NewService(eventRepository, userRepository, cfg.AdminTelegramIDs)
 	userList := adminusers.NewService(userRepository, cfg.AdminTelegramIDs)
+	announcementsService := announcements.NewService(ctx, userRepository)
+	defer announcementsService.Close()
 	registrations := repositories.NewEventRegistrationRepository(pool)
 	browser, err := userevents.NewService(eventRepository, tagRepository, registrations)
 	if err != nil {
 		return fmt.Errorf("create event browser: %w", err)
 	}
-	cancelAdminDrafts := admin.Register(b, cfg.AdminTelegramIDs, eventCreationService, tagService, eventManagement, userList, eventEditingService)
+	cancelAdminDrafts := admin.Register(b, cfg.AdminTelegramIDs, eventCreationService, tagService, eventManagement, userList, announcementsService, eventEditingService)
 	cancelAll := user.Register(b, cfg.AdminTelegramIDs, browser, cancelAdminDrafts)
 	navigator.SetCleanup(cancelAll)
 

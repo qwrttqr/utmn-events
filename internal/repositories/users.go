@@ -76,3 +76,24 @@ func readUsers(rows pgx.Rows) ([]domain.User, error) {
 	}
 	return users, nil
 }
+
+func (r *UserRepository) AnnouncementRecipients(ctx context.Context, afterTelegramID, authorID int64, limit int) ([]int64, error) {
+	rows, err := r.pool.Query(ctx, `SELECT tg_id FROM users WHERE tg_id > $1 AND tg_id <> $2 ORDER BY tg_id LIMIT $3`, afterTelegramID, authorID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list announcement recipients: %w", err)
+	}
+	defer rows.Close()
+
+	var recipients []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan announcement recipient: %w", err)
+		}
+		recipients = append(recipients, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read announcement recipients: %w", err)
+	}
+	return recipients, nil
+}

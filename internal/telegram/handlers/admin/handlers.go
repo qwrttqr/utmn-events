@@ -3,6 +3,7 @@ package admin
 import (
 	"github.com/go-telegram/bot"
 
+	"utmn-events-bot/internal/telegram/handlers/admin/announcements"
 	"utmn-events-bot/internal/telegram/handlers/admin/event_creation"
 	"utmn-events-bot/internal/telegram/handlers/admin/event_editing"
 	"utmn-events-bot/internal/telegram/handlers/admin/event_management"
@@ -19,6 +20,7 @@ func Register(
 	tagsService *tags.TagsService,
 	managementService *event_management.EventManagementService,
 	usersService *adminusers.UsersService,
+	announcementsService *announcements.AnnouncementsService,
 	eventEditingService *event_editing.EventEditingService,
 ) func(int64) {
 	guard := middleware.RequireAdmin(adminIDs)
@@ -29,6 +31,7 @@ func Register(
 		tagsService.Cancel(id)
 		managementService.Cancel(id)
 		usersService.Cancel(id)
+		announcementsService.Cancel(id)
 	}
 
 	menu.RegisterCommand(b, guard, cancel)
@@ -38,6 +41,7 @@ func Register(
 	event_editing.Register(b, eventEditingService, guard)
 	event_management.Register(b, managementService, event_editing.NewHandler(eventEditingService), guard, cancel)
 	adminusers.Register(b, usersService, guard, cancel)
+	announcements.Register(b, announcementsService, guard, cancel)
 	menu.RegisterCallbacks(b, guard, cancel)
 	return cancel
 }
