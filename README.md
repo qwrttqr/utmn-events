@@ -16,6 +16,27 @@ let users cancel, restart, confirm, and open the menu. `/start` also restarts an
 incomplete registration. Registration is required for all messages and buttons,
 including admin access. Completed registrations are saved in PostgreSQL;
 incomplete drafts are stored in memory and disappear when the bot restarts.
+Conversation state and typed draft/session data now use `internal/fsm`, backed by
+its in-memory state and data adapters over the generic sharded cache. Registration,
+event forms, tag management, browsing, and admin lists each have named FSM states.
+Feature services own validation, repository calls, and locks covering complete
+update processing. Back restores saved draft data and its FSM state; cancellation and
+completion call `Finish`. State/data writes remain separate operations, so this
+is an in-memory integration rather than an atomic distributed session backend.
+
+Admin and user features keep explicit route registration and Telegram handlers
+in `handlers.go`, keyboard construction in `keyboards.go`, and state, validation,
+and repository operations in `services.go`. Handlers receive services constructed
+with repository dependencies. Admin event creation, editing, and management live in sibling
+`admin/event_creation`, `admin/event_editing`, and `admin/event_management` folders. User menu handlers
+live in `user/menu`. Each input step and callback action has a named handler and
+an explicit route registration. Creation and editing each own their validation and call their injected
+repository directly. Editing state and handlers live in `admin/event_editing`;
+there is no shared event service layer.
+`admin/handlers.go` and `user/handlers.go` are the wiring points for their feature
+routes. Registration has its own `handlers.go`, `services.go`, `keyboards.go`, and
+an access-check middleware. Registration steps use explicit handlers; its service
+owns draft state, validation, and the user repository.
 Startup verifies database connectivity; database failures block protected actions
 and leave confirmation drafts available for retry.
 
@@ -23,6 +44,28 @@ Set `BOT_ADMIN_TELEGRAM_IDS` to semicolon-separated Telegram user IDs. Registere
 admins land in the admin panel on `/start`, after registration, and when expired
 navigation opens Home. They can explicitly switch to the user menu and back.
 Home returns to the currently selected panel. `/admin` also opens the admin panel.
+
+Users and admins can open «👤 Мой профиль» from either menu and edit their first
+name, last name, or optional surname. Changes are previewed before saving; surname
+can also be cleared. Profile editing is implemented in `user/profile` with its own
+handlers, service, and keyboards. Updates affect only the current user's selected
+name field. Paginated lists omit page numbers and use ⬅️ / ➡️ buttons; shared
+navigation uses 🏠 for Home and 🔄 for Refresh.
+
+Admins can create a text announcement, preview it, edit it, and confirm delivery
+to registered users. The author is excluded from the broadcast and receives a
+completion report with delivery and failure counts. Announcements use the same
+`handlers.go`, `services.go`, and `keyboards.go` structure under
+`admin/announcements`. User-list formatting lives in each consuming feature's
+`helpers.go`.
+
+Broadcasts run in the background, one campaign at a time. A channel semaphore
+allows four concurrent sends, and a ticker paces them at 20 requests per second.
+Recipients are read in batches of 100. Failed deliveries are logged and counted
+without stopping the campaign. The sending method also sends the author a report.
+Shutdown cancels active work and waits for workers before closing the database
+pool. Drafts and broadcast jobs are in memory; restarting the bot does not resume
+a partial send.
 
 The shared navigator keeps up to 10 screens per private chat. Back restores the
 previous screen and its draft; Home clears the draft and returns to the current
