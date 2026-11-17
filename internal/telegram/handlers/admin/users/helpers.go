@@ -1,4 +1,4 @@
-package presentation
+package users
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"utmn-events-bot/internal/domain"
 )
 
-func Users(users []domain.User, offset int, adminIDs []int64) string {
+func formatUsers(users []domain.User, offset int, adminIDs []int64) string {
 	var lines []string
 	for i, user := range users {
 		role := "user"

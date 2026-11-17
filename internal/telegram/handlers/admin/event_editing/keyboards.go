@@ -1,6 +1,8 @@
-package events
+package event_editing
 
-import "github.com/go-telegram/bot/models"
+import (
+	"github.com/go-telegram/bot/models"
+)
 
 func eventKeyboard(view eventScreen) *models.InlineKeyboardMarkup {
 	keyboard := &models.InlineKeyboardMarkup{}

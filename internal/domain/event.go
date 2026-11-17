@@ -10,6 +10,8 @@ var ErrCapacityBelowRegistrations = errors.New("capacity is below current regist
 var ErrEventFull = errors.New("event is full")
 var ErrEventClosed = errors.New("event registration is closed")
 var ErrUserNotRegistered = errors.New("user is not registered")
+var ErrEventStartInPast = errors.New("event start must be in the future")
+var ErrInvalidEvent = errors.New("invalid event")
 
 type EventFilter struct {
 	TagIDs         []int64

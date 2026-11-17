@@ -3,57 +3,76 @@ package registration
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
 
-func (p *Pipeline) RequireRegistered(next bot.HandlerFunc) bot.HandlerFunc {
+func (h *Handler) RequireRegistered(next bot.HandlerFunc) bot.HandlerFunc {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		var user *models.User
 		var message *models.Message
-		var callback string
-		if update.CallbackQuery != nil {
-			user = &update.CallbackQuery.From
-			message = update.CallbackQuery.Message.Message
-			callback = update.CallbackQuery.Data
-		} else if update.Message != nil {
-			message = update.Message
-			user = message.From
+		if q := update.CallbackQuery; q != nil {
+			user, message = &q.From, q.Message.Message
+		} else if m := update.Message; m != nil {
+			user, message = m.From, m
 		}
 		if user == nil {
 			return
 		}
-
 		if message == nil || message.Chat.Type != models.ChatTypePrivate || message.Chat.ID != user.ID {
-			if update.CallbackQuery != nil {
-				answer(ctx, b, update.CallbackQuery.ID, "Откройте личный чат с ботом и отправьте /start.")
+			if q := update.CallbackQuery; q != nil {
+				answer(ctx, b, q.ID, "Откройте личный чат с ботом и отправьте /start.")
 			} else if message != nil {
 				send(ctx, b, message.Chat.ID, screen{text: "Откройте личный чат с ботом и отправьте /start."})
 			}
 			return
 		}
 
-		text := message.Text
-		if update.CallbackQuery != nil {
-			text = "" // The bot's previous prompt is not user input.
-		}
 		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		view, handled, err := p.process(dbCtx, user.ID, user.Username, text, callback)
+		registered, err := h.service.isRegistered(dbCtx, user.ID)
 		cancel()
 		if err != nil {
-			slog.ErrorContext(ctx, "registration failed", "user_id", user.ID, "error", err)
-			view.text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + view.text
-			view.temporary = true
+			slog.ErrorContext(ctx, "check registration failed", "user_id", user.ID, "error", err)
+			if q := update.CallbackQuery; q != nil {
+				answer(ctx, b, q.ID, "")
+			}
+			send(ctx, b, message.Chat.ID, screen{text: "Не удалось проверить регистрацию. Попробуйте ещё раз.", temporary: true})
+			return
 		}
-		if !handled {
+		if registered {
+			h.service.Cancel(user.ID)
+			if q := update.CallbackQuery; q != nil && strings.HasPrefix(q.Data, "registration:") {
+				answer(ctx, b, q.ID, "")
+				send(ctx, b, message.Chat.ID, screen{text: "Вы уже зарегистрированы.", menu: true})
+				return
+			}
 			next(ctx, b, update)
 			return
 		}
-		if update.CallbackQuery != nil {
-			answer(ctx, b, update.CallbackQuery.ID, "")
+
+		if q := update.CallbackQuery; q != nil {
+			if strings.HasPrefix(q.Data, "registration:") {
+				next(ctx, b, update)
+			} else {
+				h.Preview(ctx, b, update)
+			}
+			return
 		}
-		send(ctx, b, message.Chat.ID, view)
+		switch command(message.Text) {
+		case "/start":
+			h.Start(ctx, b, update)
+			return
+		case "/cancel":
+			h.Cancel(ctx, b, update)
+			return
+		}
+		if !h.service.hasDraft(user.ID) {
+			h.Start(ctx, b, update)
+			return
+		}
+		next(ctx, b, update)
 	}
 }

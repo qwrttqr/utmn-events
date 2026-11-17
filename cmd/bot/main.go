@@ -11,13 +11,15 @@ import (
 	"utmn-events-bot/internal/config"
 	"utmn-events-bot/internal/repositories"
 	"utmn-events-bot/internal/telegram/handlers/admin"
-	"utmn-events-bot/internal/telegram/handlers/admin/events"
-	"utmn-events-bot/internal/telegram/handlers/admin/events/manage"
+	"utmn-events-bot/internal/telegram/handlers/admin/event_creation"
+	"utmn-events-bot/internal/telegram/handlers/admin/event_editing"
+	"utmn-events-bot/internal/telegram/handlers/admin/event_management"
 	"utmn-events-bot/internal/telegram/handlers/admin/tags"
 	adminusers "utmn-events-bot/internal/telegram/handlers/admin/users"
 	"utmn-events-bot/internal/telegram/handlers/registration"
 	"utmn-events-bot/internal/telegram/handlers/user"
 	userevents "utmn-events-bot/internal/telegram/handlers/user/events"
+	usermenu "utmn-events-bot/internal/telegram/handlers/user/menu"
 	"utmn-events-bot/internal/telegram/navigation"
 
 	"github.com/go-telegram/bot"
@@ -67,15 +69,21 @@ func run() error {
 		return fmt.Errorf("connect to database: %w", err)
 	}
 	userRepository := repositories.NewUserRepository(pool)
-	registrationPipeline := registration.New(userRepository)
+	registrationService := registration.NewService(userRepository)
+	registrationHandler := registration.NewHandler(registrationService)
 	eventRepository := repositories.NewEventRepository(pool)
-	eventFlow, err := events.New(eventRepository)
+	eventCreationService, err := event_creation.NewService(eventRepository)
 	if err != nil {
 		return err
 	}
-	navigator := navigation.New(cfg.AdminTelegramIDs, func(id int64) navigation.Page { return user.DefaultPage(id, cfg.AdminTelegramIDs) })
+	eventEditingService, err := event_editing.NewService(eventRepository)
+	if err != nil {
+		return err
+	}
+
+	navigator := navigation.New(cfg.AdminTelegramIDs, func(id int64) navigation.Page { return usermenu.DefaultPage(id, cfg.AdminTelegramIDs) })
 	b, err := bot.New(cfg.BotToken,
-		bot.WithMiddlewares(navigator.Middleware, registrationPipeline.RequireRegistered),
+		bot.WithMiddlewares(navigator.Middleware, registrationHandler.RequireRegistered),
 		// Preserve input order for the multi-step registration conversation.
 		bot.WithWorkers(1),
 		bot.WithNotAsyncHandlers(),
@@ -83,21 +91,21 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create bot: %w", err)
 	}
+	registration.Register(b, registrationService)
+
 	tagRepository := repositories.NewTagRepository(pool)
-	tagFlow := tags.New(tagRepository, eventRepository)
+	tagService := tags.NewService(tagRepository, eventRepository)
 	navigator.Register(b)
-	eventManagement := manage.New(eventRepository, eventFlow, userRepository, cfg.AdminTelegramIDs)
-	userList := adminusers.New(userRepository, cfg.AdminTelegramIDs)
+	eventManagement := event_management.NewService(eventRepository, userRepository, cfg.AdminTelegramIDs)
+	userList := adminusers.NewService(userRepository, cfg.AdminTelegramIDs)
 	registrations := repositories.NewEventRegistrationRepository(pool)
-	browser, err := userevents.New(eventRepository, tagRepository, registrations)
+	browser, err := userevents.NewService(eventRepository, tagRepository, registrations)
 	if err != nil {
 		return fmt.Errorf("create event browser: %w", err)
 	}
-	cancelAdminDrafts := admin.Register(b, cfg.AdminTelegramIDs, eventFlow, tagFlow, eventManagement, userList)
-	cancelAll := func(id int64) { cancelAdminDrafts(id); browser.Cancel(id) }
+	cancelAdminDrafts := admin.Register(b, cfg.AdminTelegramIDs, eventCreationService, tagService, eventManagement, userList, eventEditingService)
+	cancelAll := user.Register(b, cfg.AdminTelegramIDs, browser, cancelAdminDrafts)
 	navigator.SetCleanup(cancelAll)
-	user.Register(b, cfg.AdminTelegramIDs, cancelAll)
-	userevents.Register(b, browser, cancelAdminDrafts)
 
 	slog.Info("bot starting")
 	b.Start(ctx)
