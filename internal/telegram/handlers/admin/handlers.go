@@ -10,6 +10,7 @@ import (
 	"utmn-events-bot/internal/telegram/handlers/admin/menu"
 	"utmn-events-bot/internal/telegram/handlers/admin/tags"
 	adminusers "utmn-events-bot/internal/telegram/handlers/admin/users"
+	"utmn-events-bot/internal/telegram/handlers/user/profile"
 	"utmn-events-bot/internal/telegram/middleware"
 )
 
@@ -22,10 +23,12 @@ func Register(
 	usersService *adminusers.UsersService,
 	announcementsService *announcements.AnnouncementsService,
 	eventEditingService *event_editing.EventEditingService,
+	profileService *profile.ProfileService,
 ) func(int64) {
 	guard := middleware.RequireAdmin(adminIDs)
 
 	cancel := func(id int64) {
+		profileService.Cancel(id)
 		eventCreationService.Cancel(id)
 		eventEditingService.Cancel(id)
 		tagsService.Cancel(id)

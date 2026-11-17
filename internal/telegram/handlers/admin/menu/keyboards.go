@@ -5,6 +5,7 @@ import "github.com/go-telegram/bot/models"
 func menuKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
+			{{Text: "👤 Мой профиль", CallbackData: "user:profile"}},
 			{{Text: "Создать мероприятие", CallbackData: "admin:create_event"}},
 			{{Text: "Мероприятия", CallbackData: "admin:events"}},
 			{{Text: "Создать объявление", CallbackData: "admin:announcement"}},

@@ -21,6 +21,7 @@ import (
 	"utmn-events-bot/internal/telegram/handlers/user"
 	userevents "utmn-events-bot/internal/telegram/handlers/user/events"
 	usermenu "utmn-events-bot/internal/telegram/handlers/user/menu"
+	"utmn-events-bot/internal/telegram/handlers/user/profile"
 	"utmn-events-bot/internal/telegram/navigation"
 
 	"github.com/go-telegram/bot"
@@ -70,6 +71,7 @@ func run() error {
 		return fmt.Errorf("connect to database: %w", err)
 	}
 	userRepository := repositories.NewUserRepository(pool)
+	profileService := profile.NewService(userRepository)
 	registrationService := registration.NewService(userRepository)
 	registrationHandler := registration.NewHandler(registrationService)
 	eventRepository := repositories.NewEventRepository(pool)
@@ -106,8 +108,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create event browser: %w", err)
 	}
-	cancelAdminDrafts := admin.Register(b, cfg.AdminTelegramIDs, eventCreationService, tagService, eventManagement, userList, announcementsService, eventEditingService)
-	cancelAll := user.Register(b, cfg.AdminTelegramIDs, browser, cancelAdminDrafts)
+	cancelAdminDrafts := admin.Register(b, cfg.AdminTelegramIDs, eventCreationService, tagService, eventManagement, userList, announcementsService, eventEditingService, profileService)
+	cancelAll := user.Register(b, cfg.AdminTelegramIDs, browser, profileService, cancelAdminDrafts)
 	navigator.SetCleanup(cancelAll)
 
 	slog.Info("bot starting")

@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
 
@@ -96,4 +97,51 @@ func (r *UserRepository) AnnouncementRecipients(ctx context.Context, afterTelegr
 		return nil, fmt.Errorf("read announcement recipients: %w", err)
 	}
 	return recipients, nil
+}
+
+func (r *UserRepository) GetByTelegramID(ctx context.Context, telegramID int64) (domain.User, error) {
+	var user domain.User
+	err := r.pool.QueryRow(ctx, `SELECT id, tg_id, COALESCE(tg_username, ''), firstname, lastname, COALESCE(surname, ''), role FROM users WHERE tg_id = $1`, telegramID).Scan(
+		&user.ID, &user.TelegramID, &user.Username, &user.FirstName, &user.LastName, &user.Surname, &user.Role,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.User{}, domain.ErrUserNotRegistered
+	}
+	if err != nil {
+		return domain.User{}, fmt.Errorf("get user profile: %w", err)
+	}
+	return user, nil
+}
+
+func (r *UserRepository) UpdateFirstName(ctx context.Context, telegramID int64, firstName string) error {
+	result, err := r.pool.Exec(ctx, `UPDATE users SET firstname = $2 WHERE tg_id = $1`, telegramID, firstName)
+	if err != nil {
+		return fmt.Errorf("update first name: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrUserNotRegistered
+	}
+	return nil
+}
+
+func (r *UserRepository) UpdateLastName(ctx context.Context, telegramID int64, lastName string) error {
+	result, err := r.pool.Exec(ctx, `UPDATE users SET lastname = $2 WHERE tg_id = $1`, telegramID, lastName)
+	if err != nil {
+		return fmt.Errorf("update last name: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrUserNotRegistered
+	}
+	return nil
+}
+
+func (r *UserRepository) UpdateSurname(ctx context.Context, telegramID int64, surname string) error {
+	result, err := r.pool.Exec(ctx, `UPDATE users SET surname = NULLIF($2, '') WHERE tg_id = $1`, telegramID, surname)
+	if err != nil {
+		return fmt.Errorf("update surname: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrUserNotRegistered
+	}
+	return nil
 }
