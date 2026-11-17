@@ -46,7 +46,7 @@ func (h *Handler) List(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 	h.beforeBegin(q.From.ID)
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	page, err := h.service.list(dbCtx, q.From.ID, q.Data)
+	page, err := h.service.list(dbCtx, q.From.ID)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "users action failed", "user_id", q.From.ID, "error", err)
