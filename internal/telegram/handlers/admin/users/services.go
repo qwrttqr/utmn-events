@@ -124,7 +124,7 @@ func (f *UsersService) render(ctx context.Context, userID int64, s session) (nav
 		users = users[:pagination.Size]
 	}
 
-	page := navigation.Page{Key: "admin:users", Text: fmt.Sprintf("Все пользователи\nСтраница %d\n\n%s", s.page+1, formatUsers(users, s.page*pagination.Size, f.adminIDs)), Admin: true, Keyboard: usersKeyboard(s, more)}
+	page := navigation.Page{Key: "admin:users", Text: fmt.Sprintf("Все пользователи\n\n%s", formatUsers(users, s.page*pagination.Size, f.adminIDs)), Admin: true, Keyboard: usersKeyboard(s, more)}
 	page.Restore = func(ctx context.Context) (navigation.Page, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()

@@ -212,11 +212,11 @@ func (n *Navigator) display(ctx context.Context, b *bot.Bot, chatID int64, s *se
 			}
 			markup.InlineKeyboard = rows
 			markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{
-				{Text: "Назад", CallbackData: "nav:" + token + ":back"},
-				{Text: "Главная", CallbackData: "nav:" + token + ":home"},
+				{Text: "⬅️", CallbackData: "nav:" + token + ":back"},
+				{Text: "🏠", CallbackData: "nav:" + token + ":home"},
 			})
 		}
-		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{{Text: "Обновить", CallbackData: "nav:" + token + ":refresh"}})
+		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{{Text: "🔄", CallbackData: "nav:" + token + ":refresh"}})
 	}
 	old := slices.Clone(s.messages)
 	if len(old) == 0 && update != nil && update.CallbackQuery != nil && update.CallbackQuery.Message.Message != nil {

@@ -23,7 +23,7 @@ func keyboard(view screen) *models.InlineKeyboardMarkup {
 		add("Отменить регистрацию", "registration:cancel")
 	}
 	if view.menu {
-		add("Открыть меню", "home:menu")
+		add("🏠", "home:menu")
 	}
 	if len(markup.InlineKeyboard) == 0 {
 		return nil

@@ -607,7 +607,7 @@ func (f *EventsService) render(ctx context.Context, userID int64, s *session) (n
 			tags = tags[:pagination.Size]
 		}
 		s.tags = tags
-		page.Text = fmt.Sprintf("Выберите хотя бы один тег.\nСовпадение по любому выбранному тегу.\nВыбрано: %d\nСтраница %d", len(s.selected), s.page+1)
+		page.Text = fmt.Sprintf("Выберите хотя бы один тег.\nСовпадение по любому выбранному тегу.\nВыбрано: %d", len(s.selected))
 		if len(tags) == 0 {
 			page.Text += "\nТегов пока нет."
 		}
@@ -639,7 +639,7 @@ func (f *EventsService) render(ctx context.Context, userID int64, s *session) (n
 		if more {
 			events = events[:pagination.Size]
 		}
-		page.Text = fmt.Sprintf("%s\nСтраница %d", label, s.page+1)
+		page.Text = label
 		if len(events) == 0 {
 			page.Text += "\nМероприятий не найдено."
 		}

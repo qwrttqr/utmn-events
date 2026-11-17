@@ -693,10 +693,10 @@ func (f *TagsService) render(ctx context.Context, s *session) (screen, error) {
 		}
 	}
 	if s.page > 0 {
-		view.buttons = append(view.buttons, s.button("← Назад", "page"+strconv.Itoa(s.page-1)))
+		view.buttons = append(view.buttons, s.button("⬅️", "page"+strconv.Itoa(s.page-1)))
 	}
 	if more {
-		view.buttons = append(view.buttons, s.button("Далее →", "page"+strconv.Itoa(s.page+1)))
+		view.buttons = append(view.buttons, s.button("➡️", "page"+strconv.Itoa(s.page+1)))
 	}
 	if s.mode == browse {
 		view.buttons = append(view.buttons, s.button("Создать тег", "create"), s.button("Назначить теги мероприятию", "assign"))
@@ -704,7 +704,6 @@ func (f *TagsService) render(ctx context.Context, s *session) (screen, error) {
 	if s.mode == editTags {
 		view.buttons = append(view.buttons, s.button("Снять все теги", "clear"), s.button("Сохранить", "save"))
 	}
-	view.text += fmt.Sprintf("\nСтраница %d", s.page+1)
 	return view, nil
 }
 

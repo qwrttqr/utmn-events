@@ -456,7 +456,7 @@ func (f *EventManagementService) clear(userID int64) {
 func (f *EventManagementService) render(ctx context.Context, userID int64, s session) (navigation.Page, error) {
 	page := navigation.Page{Key: fmt.Sprintf("admin:events:%d:%d", s.mode, s.eventID), Admin: true}
 	if s.mode == list {
-		page.Key, page.Text = "admin:events:list", fmt.Sprintf("Мероприятия\nСтраница %d\nВыберите мероприятие.", s.page+1)
+		page.Key, page.Text = "admin:events:list", "Мероприятия\nВыберите мероприятие."
 		events, err := f.repo.List(ctx, pageSize+1, s.page*pageSize)
 		if err != nil {
 			return navigation.Page{}, err
@@ -502,7 +502,7 @@ func (f *EventManagementService) render(ctx context.Context, userID int64, s ses
 			if more {
 				users = users[:pageSize]
 			}
-			page.Text = fmt.Sprintf("Участники «%s» (№%d)\nЗарегистрировано: %d\nСтраница %d\n\n%s", event.Title, event.ID, event.RegistrationCount, s.page+1, formatUsers(users, s.page*pageSize, f.adminIDs))
+			page.Text = fmt.Sprintf("Участники «%s» (№%d)\nЗарегистрировано: %d\n\n%s", event.Title, event.ID, event.RegistrationCount, formatUsers(users, s.page*pageSize, f.adminIDs))
 			page.Keyboard = participantsKeyboard(s, more)
 		case fields:
 			page.Text = fmt.Sprintf("Редактирование «%s» (№%d)\nЧто изменить?", event.Title, event.ID)

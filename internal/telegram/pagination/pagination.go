@@ -24,10 +24,10 @@ func Move(current int, action string) (int, bool) {
 func Add(keyboard *models.InlineKeyboardMarkup, page int, more bool, callback func(string) string) {
 	var row []models.InlineKeyboardButton
 	if page > 0 {
-		row = append(row, models.InlineKeyboardButton{Text: "Предыдущая", CallbackData: callback(fmt.Sprintf("page%d", page-1))})
+		row = append(row, models.InlineKeyboardButton{Text: "⬅️", CallbackData: callback(fmt.Sprintf("page%d", page-1))})
 	}
 	if more {
-		row = append(row, models.InlineKeyboardButton{Text: "Следующая", CallbackData: callback(fmt.Sprintf("page%d", page+1))})
+		row = append(row, models.InlineKeyboardButton{Text: "➡️", CallbackData: callback(fmt.Sprintf("page%d", page+1))})
 	}
 	if len(row) > 0 {
 		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, row)
