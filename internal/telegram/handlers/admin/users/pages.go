@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"utmn-events-bot/internal/telegram/navigation"
-	"utmn-events-bot/internal/telegram/pagination"
 )
 
 func expiredPage() navigation.Page {
@@ -20,11 +19,14 @@ func (h *Handler) page(userID int64, result listResult) navigation.Page {
 	if result.expired {
 		return expiredPage()
 	}
-	offset := result.pageNumber * pagination.Size
+	text := "Все пользователи"
+	if len(result.users) == 0 {
+		text += "\n\nСписок пуст."
+	}
 	page := navigation.Page{
 		Key:   "admin:users",
-		Text:  fmt.Sprintf("Все пользователи\n\n%s", formatUsers(result.users, offset, h.service.adminIDs)),
-		Admin: true, Keyboard: usersKeyboard(result, h.service.adminIDs),
+		Text:  text,
+		Admin: true, Keyboard: usersKeyboard(result),
 		Restore: func(ctx context.Context) (navigation.Page, error) {
 			dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
@@ -37,7 +39,29 @@ func (h *Handler) page(userID int64, result listResult) navigation.Page {
 	return page
 }
 
-func promotionPage(draft promotion, message string) navigation.Page {
+func (h *Handler) userPage(userID int64, selected userSelection) navigation.Page {
+	role := "user"
+	if isAdmin(selected.target, h.service.adminIDs) {
+		role = "admin"
+	}
+	return navigation.Page{
+		Key:      "admin:users:details",
+		Text:     fmt.Sprintf("%s\nРоль: %s", userDetails(selected.target), role),
+		Keyboard: userKeyboard(selected.target, selected.token, h.service.adminIDs),
+		Admin:    true,
+		Restore: func(ctx context.Context) (navigation.Page, error) {
+			dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			restored, err := h.service.loadUser(dbCtx, userID, selected.target.TelegramID, selected.pageNumber)
+			if err != nil {
+				return navigation.Page{}, err
+			}
+			return h.userPage(userID, restored), nil
+		},
+	}
+}
+
+func promotionPage(draft userSelection, message string) navigation.Page {
 	return navigation.Page{
 		Key:          "admin:users:promotion",
 		Text:         message + "Выдать права администратора этому пользователю?\n\n" + userDetails(draft.target),

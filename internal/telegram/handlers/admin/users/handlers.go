@@ -26,6 +26,7 @@ func NewHandler(navigator *navigation.Navigator, service *UsersService) *Handler
 func Register(b *bot.Bot, navigator *navigation.Navigator, service *UsersService, guard bot.Middleware) {
 	h := NewHandler(navigator, service)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:users", bot.MatchTypeExact, h.List, guard)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, userPrefix, bot.MatchTypePrefix, h.User, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, promotePrefix, bot.MatchTypePrefix, h.SelectPromotion, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, confirmPrefix, bot.MatchTypePrefix, h.FinishPromotion, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cancelPrefix, bot.MatchTypePrefix, h.FinishPromotion, guard)
@@ -40,21 +41,44 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *UsersService
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, paginationPrefix, bot.MatchTypePrefix, h.StaleCallback, guard)
 }
 
+func (h *Handler) User(ctx context.Context, b *bot.Bot, update *models.Update) {
+	q := update.CallbackQuery
+	if q == nil || q.Message.Message == nil {
+		return
+	}
+	targetID, err := strconv.ParseInt(strings.TrimPrefix(q.Data, userPrefix), 10, 64)
+	if err != nil {
+		answer(ctx, b, q.ID, "Эта кнопка устарела.")
+		return
+	}
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	selected, err := h.service.selectUser(dbCtx, q.From.ID, targetID)
+	cancel()
+	switch {
+	case errors.Is(err, domain.ErrUserNotRegistered):
+		answer(ctx, b, q.ID, "Пользователь больше не зарегистрирован.")
+	case err != nil:
+		slog.ErrorContext(ctx, "load user details failed", "target_id", targetID, "error", err)
+		answer(ctx, b, q.ID, "Не удалось загрузить пользователя. Попробуйте ещё раз.")
+	case selected.token == "":
+		answer(ctx, b, q.ID, "Эта кнопка устарела.")
+	default:
+		answer(ctx, b, q.ID, "")
+		h.show(ctx, b, update, h.userPage(q.From.ID, selected))
+	}
+}
+
 func (h *Handler) SelectPromotion(ctx context.Context, b *bot.Bot, update *models.Update) {
 	q := update.CallbackQuery
 	if q == nil || q.Message.Message == nil {
 		return
 	}
-	targetID, err := strconv.ParseInt(strings.TrimPrefix(q.Data, promotePrefix), 10, 64)
-	if err != nil {
+	draft, ok := h.service.selection(q.From.ID, strings.TrimPrefix(q.Data, promotePrefix), usersDetails)
+	if !ok || isAdmin(draft.target, h.service.adminIDs) {
 		answer(ctx, b, q.ID, "Эта кнопка устарела.")
 		return
 	}
-	draft, ok := h.service.selectPromotion(q.From.ID, targetID)
-	if !ok {
-		answer(ctx, b, q.ID, "Эта кнопка устарела.")
-		return
-	}
+	h.service.machine.Replace(q.From.ID, usersPromotion, draft)
 	answer(ctx, b, q.ID, "")
 	h.show(ctx, b, update, promotionPage(draft, ""))
 }
@@ -68,12 +92,22 @@ func (h *Handler) FinishPromotion(ctx context.Context, b *bot.Bot, update *model
 	if !confirm {
 		token = strings.TrimPrefix(q.Data, cancelPrefix)
 	}
-	draft, ok := h.service.pendingPromotion(q.From.ID, token)
+	draft, ok := h.service.selection(q.From.ID, token, usersPromotion)
 	if !ok {
 		answer(ctx, b, q.ID, "Эта кнопка устарела.")
 		return
 	}
 	answer(ctx, b, q.ID, "")
+	if !confirm {
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		selected, err := h.service.loadUser(dbCtx, q.From.ID, draft.target.TelegramID, draft.pageNumber)
+		cancel()
+		if err == nil {
+			h.show(ctx, b, update, h.userPage(q.From.ID, selected))
+			return
+		}
+		slog.ErrorContext(ctx, "restore user details failed", "target_id", draft.target.TelegramID, "error", err)
+	}
 
 	var notice string
 	if confirm {

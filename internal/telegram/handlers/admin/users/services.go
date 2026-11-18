@@ -12,10 +12,11 @@ import (
 
 type Repository interface {
 	List(context.Context, int, int) ([]domain.User, error)
+	GetByTelegramID(context.Context, int64) (domain.User, error)
 	GrantAdmin(context.Context, int64) error
 }
 
-type promotion struct {
+type userSelection struct {
 	target     domain.User
 	pageNumber int
 	token      string
@@ -62,27 +63,36 @@ func (f *UsersService) loadPage(ctx context.Context, userID int64, pageNumber in
 	return result, nil
 }
 
-func (f *UsersService) selectPromotion(userID, targetID int64) (promotion, bool) {
+func (f *UsersService) selectUser(ctx context.Context, userID, targetID int64) (userSelection, error) {
 	state, current, exists := fsm.Load[listResult](f.machine, userID)
 	if !exists || state != usersList {
-		return promotion{}, false
+		return userSelection{}, nil
 	}
 	for _, user := range current.users {
-		if user.TelegramID == targetID && !isAdmin(user, f.adminIDs) {
-			draft := promotion{target: user, pageNumber: current.pageNumber, token: rand.Text()}
-			f.machine.Replace(userID, usersPromotion, draft)
-			return draft, true
+		if user.TelegramID == targetID {
+			return f.loadUser(ctx, userID, targetID, current.pageNumber)
 		}
 	}
-	return promotion{}, false
+	return userSelection{}, nil
 }
 
-func (f *UsersService) pendingPromotion(userID int64, token string) (promotion, bool) {
-	state, draft, exists := fsm.Load[promotion](f.machine, userID)
-	return draft, exists && state == usersPromotion && draft.token == token
+func (f *UsersService) loadUser(ctx context.Context, userID, targetID int64, pageNumber int) (userSelection, error) {
+	user, err := f.repo.GetByTelegramID(ctx, targetID)
+	if err != nil {
+		return userSelection{}, err
+	}
+	selection := userSelection{target: user, pageNumber: pageNumber, token: rand.Text()}
+	f.machine.Replace(userID, usersDetails, selection)
+	return selection, nil
+}
+
+func (f *UsersService) selection(userID int64, token string, expected fsm.StateID) (userSelection, bool) {
+	state, selected, exists := fsm.Load[userSelection](f.machine, userID)
+	return selected, exists && state == expected && selected.token == token
 }
 
 const (
 	usersList      fsm.StateID = "admin.users.list"
+	usersDetails   fsm.StateID = "admin.users.details"
 	usersPromotion fsm.StateID = "admin.users.promotion"
 )
