@@ -24,7 +24,7 @@ func (h *Handler) page(userID int64, result listResult) navigation.Page {
 	page := navigation.Page{
 		Key:   "admin:users",
 		Text:  fmt.Sprintf("Все пользователи\n\n%s", formatUsers(result.users, offset, h.service.adminIDs)),
-		Admin: true, Keyboard: usersKeyboard(result.pageNumber, result.more),
+		Admin: true, Keyboard: usersKeyboard(result, h.service.adminIDs),
 		Restore: func(ctx context.Context) (navigation.Page, error) {
 			dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
@@ -35,4 +35,14 @@ func (h *Handler) page(userID int64, result listResult) navigation.Page {
 			return h.page(userID, restored), nil
 		}}
 	return page
+}
+
+func promotionPage(draft promotion, message string) navigation.Page {
+	return navigation.Page{
+		Key:          "admin:users:promotion",
+		Text:         message + "Выдать права администратора этому пользователю?\n\n" + userDetails(draft.target),
+		Keyboard:     promotionKeyboard(draft.token),
+		Admin:        true,
+		NoNavigation: true,
+	}
 }

@@ -11,20 +11,22 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"utmn-events-bot/internal/domain"
+	"utmn-events-bot/internal/telegram/middleware"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
 type Handler struct {
 	navigator *navigation.Navigator
+	isAdmin   middleware.AdminChecker
 	service   *EventsService
 }
 
-func NewHandler(navigator *navigation.Navigator, service *EventsService) *Handler {
-	return &Handler{navigator: navigator, service: service}
+func NewHandler(navigator *navigation.Navigator, service *EventsService, isAdmin middleware.AdminChecker) *Handler {
+	return &Handler{navigator: navigator, service: service, isAdmin: isAdmin}
 }
 
-func Register(b *bot.Bot, navigator *navigation.Navigator, service *EventsService) {
-	h := NewHandler(navigator, service)
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *EventsService, isAdmin middleware.AdminChecker) {
+	h := NewHandler(navigator, service, isAdmin)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		if q == nil {
@@ -53,7 +55,7 @@ func (h *Handler) handleCallback(ctx context.Context, b *bot.Bot, update *models
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	result, err := h.service.process(dbCtx, q.From.ID, q.Data)
 	cancel()
-	page := h.page(q.From.ID, result)
+	page := h.page(ctx, q.From.ID, result)
 	if errors.Is(err, domain.ErrEventNotFound) {
 		h.service.Cancel(q.From.ID)
 		page = navigation.Page{Key: "user:events:missing", Text: "Мероприятие уже удалено.", ClearHistory: true, Keyboard: entryKeyboard()}

@@ -12,7 +12,7 @@ func formatUsers(users []domain.User, offset int, adminIDs []int64) string {
 	var lines []string
 	for i, user := range users {
 		role := "user"
-		if slices.Contains(adminIDs, user.TelegramID) {
+		if user.Role == "admin" || slices.Contains(adminIDs, user.TelegramID) {
 			role = "admin"
 		}
 		name := strings.TrimSpace(user.LastName + " " + user.FirstName + " " + user.Surname)

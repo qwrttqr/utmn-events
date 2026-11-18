@@ -32,7 +32,7 @@ func (h *Handler) RequireRegistered(next bot.HandlerFunc) bot.HandlerFunc {
 		}
 
 		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		registered, err := h.service.isRegistered(dbCtx, user.ID)
+		registered, _, err := h.service.users.RegistrationStatus(dbCtx, user.ID)
 		cancel()
 		if err != nil {
 			slog.ErrorContext(ctx, "check registration failed", "user_id", user.ID, "error", err)

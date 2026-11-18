@@ -17,7 +17,7 @@ import (
 func Register(
 	b *bot.Bot,
 	navigator *navigation.Navigator,
-	adminIDs []int64,
+	isAdmin middleware.AdminChecker,
 	eventCreationService *eventcreation.EventCreationService,
 	tagsService *tags.TagsService,
 	managementService *eventmanagement.EventManagementService,
@@ -26,7 +26,7 @@ func Register(
 	eventEditingService *eventediting.EventEditingService,
 	finish func(int64),
 ) {
-	guard := middleware.RequireAdmin(adminIDs)
+	guard := middleware.RequireAdmin(isAdmin)
 	menu.RegisterCommand(b, navigator, guard, finish)
 
 	eventcreation.Register(b, navigator, eventCreationService, guard)

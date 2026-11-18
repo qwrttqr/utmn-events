@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+
+	"utmn-events-bot/internal/telegram/middleware"
 )
 
 type HistoryMode uint8
@@ -46,13 +48,13 @@ type session struct {
 type Navigator struct {
 	sessionsMu sync.Mutex
 	sessions   map[int64]*session
-	adminIDs   []int64
-	home       func(int64) Page
+	home       func(bool) Page
+	isAdmin    middleware.AdminChecker
 	cleanup    func(int64)
 }
 
-func New(adminIDs []int64, home func(int64) Page) *Navigator {
-	return &Navigator{sessions: make(map[int64]*session), adminIDs: slices.Clone(adminIDs), home: home}
+func New(home func(bool) Page, isAdmin middleware.AdminChecker) *Navigator {
+	return &Navigator{sessions: make(map[int64]*session), home: home, isAdmin: isAdmin}
 }
 
 func (n *Navigator) SetCleanup(cleanup func(int64)) { n.cleanup = cleanup }
@@ -76,16 +78,26 @@ func (n *Navigator) ShowHome(ctx context.Context, b *bot.Bot, update *models.Upd
 	if n.home == nil {
 		return errors.New("home page is not configured")
 	}
-	return n.Show(ctx, b, update, chatID, n.home(chatID))
+	isAdmin := isSenderChat(update, chatID) && n.isAdmin(ctx, chatID)
+	home := n.home(isAdmin)
+	if home.Admin && !isAdmin {
+		return errors.New("admin page access denied")
+	}
+	return n.show(ctx, b, update, chatID, home, isAdmin)
 }
 
 func (n *Navigator) Show(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, page Page) error {
+	isAdmin := page.Admin && isSenderChat(update, chatID) && n.isAdmin(ctx, chatID)
+	if page.Admin && !isAdmin {
+		return errors.New("admin page access denied")
+	}
+	return n.show(ctx, b, update, chatID, page, isAdmin)
+}
+
+func (n *Navigator) show(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, page Page, isAdmin bool) error {
 	if chatID <= 0 {
 		_, err := render(ctx, b, chatID, page, page.Keyboard)
 		return err
-	}
-	if page.Admin && !slices.Contains(n.adminIDs, chatID) {
-		return errors.New("admin page access denied")
 	}
 	s := n.session(chatID)
 	history := slices.Clone(s.history)
@@ -96,7 +108,10 @@ func (n *Navigator) Show(ctx context.Context, b *bot.Bot, update *models.Update,
 			history = history[:1]
 		}
 		if len(history) == 0 && n.home != nil {
-			history = append(history, n.home(chatID))
+			if !page.Admin {
+				isAdmin = isSenderChat(update, chatID) && n.isAdmin(ctx, chatID)
+			}
+			history = append(history, n.home(isAdmin))
 		}
 		history = recordPage(history, page)
 		if len(history) > 10 {
@@ -104,6 +119,18 @@ func (n *Navigator) Show(ctx context.Context, b *bot.Bot, update *models.Update,
 		}
 	}
 	return n.display(ctx, b, chatID, s, page, history, update)
+}
+
+func isSenderChat(update *models.Update, chatID int64) bool {
+	if update == nil {
+		return false
+	}
+	if q := update.CallbackQuery; q != nil {
+		m := q.Message.Message
+		return m != nil && m.Chat.Type == models.ChatTypePrivate && m.Chat.ID == chatID && q.From.ID == chatID
+	}
+	m := update.Message
+	return m != nil && m.From != nil && m.Chat.Type == models.ChatTypePrivate && m.Chat.ID == chatID && m.From.ID == chatID
 }
 
 func recordPage(history []Page, page Page) []Page {
@@ -140,6 +167,7 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 	}
 
 	s := n.session(message.Chat.ID)
+	isAdmin := n.isAdmin(ctx, q.From.ID)
 
 	parts := strings.Split(q.Data, ":")
 	answer := ""
@@ -148,7 +176,7 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 		answer = "История истекла. Открываю главное меню."
 	} else if len(parts) != 3 || parts[1] != s.token {
 		answer = "Эта кнопка устарела."
-	} else if s.history[len(s.history)-1].Admin && !slices.Contains(n.adminIDs, q.From.ID) {
+	} else if s.history[len(s.history)-1].Admin && !isAdmin {
 		answer = "Только для администратора."
 	}
 
@@ -157,8 +185,8 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 	}
 
 	if len(s.history) == 0 && n.home != nil {
-		page := n.home(q.From.ID)
-		if page.Admin && !slices.Contains(n.adminIDs, q.From.ID) {
+		page := n.home(isAdmin)
+		if page.Admin && !isAdmin {
 			return
 		}
 		if n.cleanup != nil {
@@ -189,7 +217,7 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 
 	page := history[len(history)-1]
 
-	if page.Admin && !slices.Contains(n.adminIDs, q.From.ID) {
+	if page.Admin && !isAdmin {
 		return
 	}
 	if page.Restore != nil {

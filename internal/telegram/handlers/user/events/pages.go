@@ -16,13 +16,13 @@ func expiredPage() navigation.Page {
 	return navigation.Page{Key: "user:events:expired", Text: "Эта кнопка устарела. Откройте мероприятия заново.", Keyboard: entryKeyboard()}
 }
 
-func (h *Handler) page(userID int64, result eventsResult) navigation.Page {
+func (h *Handler) page(ctx context.Context, userID int64, result eventsResult) navigation.Page {
 	var message string
 	switch result.status {
 	case eventsExpired:
 		return expiredPage()
 	case enrollmentCancelled:
-		return usermenu.GetMainPage(userID, h.service.adminIDs)
+		return usermenu.GetMainPage(h.isAdmin(ctx, userID))
 	case tagsRequired:
 		message = "Выберите хотя бы один тег."
 	case enrollmentSaved:
@@ -103,7 +103,7 @@ func (h *Handler) page(userID int64, result eventsResult) navigation.Page {
 		if err != nil {
 			return navigation.Page{}, err
 		}
-		return h.page(userID, restored), nil
+		return h.page(ctx, userID, restored), nil
 	}
 	return page
 }

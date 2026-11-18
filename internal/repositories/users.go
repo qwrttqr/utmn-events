@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"utmn-events-bot/internal/domain"
@@ -19,15 +19,26 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 	return &UserRepository{pool: pool}
 }
 
-func (r *UserRepository) IsRegistered(ctx context.Context, telegramID int64) (bool, error) {
-	var exists bool
-	err := r.pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM users WHERE tg_id = $1)`, telegramID,
-	).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("check user registration: %w", err)
+func (r *UserRepository) RegistrationStatus(ctx context.Context, telegramID int64) (registered, admin bool, err error) {
+	err = r.pool.QueryRow(ctx, `SELECT role = 'admin' FROM users WHERE tg_id = $1`, telegramID).Scan(&admin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false, nil
 	}
-	return exists, nil
+	if err != nil {
+		return false, false, fmt.Errorf("check user registration: %w", err)
+	}
+	return true, admin, nil
+}
+
+func (r *UserRepository) GrantAdmin(ctx context.Context, telegramID int64) error {
+	result, err := r.pool.Exec(ctx, `UPDATE users SET role = 'admin' WHERE tg_id = $1`, telegramID)
+	if err != nil {
+		return fmt.Errorf("grant admin role: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrUserNotRegistered
+	}
+	return nil
 }
 
 func (r *UserRepository) Create(ctx context.Context, user domain.User) error {

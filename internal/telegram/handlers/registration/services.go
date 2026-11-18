@@ -36,7 +36,7 @@ type registrationResult struct {
 }
 
 type UserRepository interface {
-	IsRegistered(ctx context.Context, telegramID int64) (bool, error)
+	RegistrationStatus(ctx context.Context, telegramID int64) (registered, admin bool, err error)
 	Create(ctx context.Context, user domain.User) error
 }
 
@@ -50,14 +50,6 @@ func NewService(machine *fsm.FSM, users UserRepository) *Service {
 		users:   users,
 		machine: machine,
 	}
-}
-
-func (s *Service) isRegistered(ctx context.Context, userID int64) (bool, error) {
-	registered, err := s.users.IsRegistered(ctx, userID)
-	if err != nil {
-		return false, fmt.Errorf("load registration status: %w", err)
-	}
-	return registered, nil
 }
 
 func (s *Service) Cancel(userID int64) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -57,13 +56,12 @@ type profileResult struct {
 }
 
 type ProfileService struct {
-	repo     Repository
-	machine  *fsm.FSM
-	adminIDs []int64
+	repo    Repository
+	machine *fsm.FSM
 }
 
-func NewService(machine *fsm.FSM, repo Repository, adminIDs []int64) *ProfileService {
-	return &ProfileService{repo: repo, machine: machine, adminIDs: slices.Clone(adminIDs)}
+func NewService(machine *fsm.FSM, repo Repository) *ProfileService {
+	return &ProfileService{repo: repo, machine: machine}
 }
 func (s *ProfileService) inState(userID int64, expected fsm.StateID) bool {
 	return s.machine.CurrentState(userID) == expected

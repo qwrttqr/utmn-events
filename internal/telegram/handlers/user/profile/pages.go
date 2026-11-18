@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"context"
 	"fmt"
 
 	"utmn-events-bot/internal/fsm"
@@ -8,13 +9,13 @@ import (
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
-func (h *Handler) page(userID int64, result profileResult) navigation.Page {
+func (h *Handler) page(ctx context.Context, userID int64, result profileResult) navigation.Page {
 	var message string
 	switch result.status {
 	case profileStale:
 		return stalePage()
 	case profileCancelled:
-		return usermenu.GetMainPage(userID, h.service.adminIDs)
+		return usermenu.GetMainPage(h.isAdmin(ctx, userID))
 	case profileInvalidName:
 		message = "Введите от 1 до 100 символов без команд и переносов строк."
 	case profileUpdated:

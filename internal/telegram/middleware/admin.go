@@ -4,14 +4,32 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
 
-func RequireAdmin(adminIDs []int64) bot.Middleware {
-	adminIDs = slices.Clone(adminIDs)
+type AdminChecker func(context.Context, int64) bool
 
+func NewAdminChecker(configuredIDs []int64, registrationStatus func(context.Context, int64) (bool, bool, error)) AdminChecker {
+	configuredIDs = slices.Clone(configuredIDs)
+	return func(ctx context.Context, userID int64) bool {
+		if slices.Contains(configuredIDs, userID) {
+			return true
+		}
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		registered, admin, err := registrationStatus(dbCtx, userID)
+		if err != nil {
+			slog.ErrorContext(ctx, "check admin role failed", "user_id", userID, "error", err)
+			return false
+		}
+		return registered && admin
+	}
+}
+
+func RequireAdmin(isAdmin AdminChecker) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			var userID int64
@@ -27,7 +45,7 @@ func RequireAdmin(adminIDs []int64) bot.Middleware {
 				return
 			}
 
-			if slices.Contains(adminIDs, userID) {
+			if isAdmin(ctx, userID) {
 				next(ctx, b, update)
 				return
 			}

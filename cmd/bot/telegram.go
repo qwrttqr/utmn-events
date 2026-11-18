@@ -27,6 +27,7 @@ import (
 	userevents "utmn-events-bot/internal/telegram/handlers/user/events"
 	usermenu "utmn-events-bot/internal/telegram/handlers/user/menu"
 	"utmn-events-bot/internal/telegram/handlers/user/profile"
+	"utmn-events-bot/internal/telegram/middleware"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
@@ -43,8 +44,9 @@ func runTelegram(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) er
 	machine := fsm.NewInMemoryFSM()
 
 	userRepository := repositories.NewUserRepository(pool)
-	profileService := profile.NewService(machine, userRepository, cfg.AdminTelegramIDs)
+	profileService := profile.NewService(machine, userRepository)
 	registrationService := registration.NewService(machine, userRepository)
+	isAdmin := middleware.NewAdminChecker(cfg.AdminTelegramIDs, userRepository.RegistrationStatus)
 
 	eventRepository := repositories.NewEventRepository(pool)
 	eventCreationService, err := eventcreation.NewService(machine, eventRepository)
@@ -58,37 +60,11 @@ func runTelegram(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) er
 		return err
 	}
 
-	navigator := navigation.New(cfg.AdminTelegramIDs, func(id int64) navigation.Page { return usermenu.DefaultPage(id, cfg.AdminTelegramIDs) })
+	navigator := navigation.New(usermenu.DefaultPage, isAdmin)
 	registrationHandler := registration.NewHandler(navigator, registrationService)
-
-	b, err := bot.New(cfg.BotToken,
-		httpOption,
-		bot.WithMiddlewares(registrationHandler.RequireRegistered),
-		bot.WithSkipGetMe(),
-		bot.WithNotAsyncHandlers(),
-	)
-	if err != nil {
-		return fmt.Errorf("create update router: %w", err)
-	}
-	dispatcher := newUpdateDispatcher(b)
-
-	poller, err := bot.New(cfg.BotToken,
-		httpOption,
-		bot.WithDefaultHandler(dispatcher.enqueue),
-		bot.WithWorkers(1),
-		bot.WithNotAsyncHandlers(),
-	)
-
-	if err != nil {
-		return fmt.Errorf("create bot: %w", err)
-	}
-
-	registrationHandler.Register(b)
 
 	tagRepository := repositories.NewTagRepository(pool)
 	tagService := tags.NewService(machine, tagRepository, eventRepository)
-
-	navigator.Register(b)
 
 	eventManagement := eventmanagement.NewService(machine, eventRepository, userRepository, cfg.AdminTelegramIDs)
 	userList := adminusers.NewService(machine, userRepository, cfg.AdminTelegramIDs)
@@ -97,14 +73,32 @@ func runTelegram(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) er
 	defer announcementsService.Close()
 
 	registrations := repositories.NewEventRegistrationRepository(pool)
-	browser, err := userevents.NewService(machine, eventRepository, tagRepository, registrations, cfg.AdminTelegramIDs)
+	browser, err := userevents.NewService(machine, eventRepository, tagRepository, registrations)
 
 	if err != nil {
 		return fmt.Errorf("create event browser: %w", err)
 	}
 
-	admin.Register(b, navigator, cfg.AdminTelegramIDs, eventCreationService, tagService, eventManagement, userList, announcementsService, eventEditingService, machine.Clear)
-	user.Register(b, navigator, cfg.AdminTelegramIDs, browser, profileService, machine.Clear)
+	router, err := bot.New(cfg.BotToken, httpOption, bot.WithSkipGetMe(), bot.WithNotAsyncHandlers(),
+		bot.WithMiddlewares(middleware.LogUpdateDuration, registrationHandler.RequireRegistered))
+	if err != nil {
+		return fmt.Errorf("create update router: %w", err)
+	}
+	registrationHandler.Register(router)
+	navigator.Register(router)
+	admin.Register(router, navigator, isAdmin, eventCreationService, tagService, eventManagement, userList, announcementsService, eventEditingService, machine.Clear)
+	user.Register(router, navigator, isAdmin, browser, profileService, machine.Clear)
+
+	dispatcher := newUpdateDispatcher(router)
+	poller, err := bot.New(cfg.BotToken,
+		httpOption,
+		bot.WithDefaultHandler(dispatcher.enqueue),
+		bot.WithWorkers(1),
+		bot.WithNotAsyncHandlers(),
+	)
+	if err != nil {
+		return fmt.Errorf("create bot: %w", err)
+	}
 
 	navigator.SetCleanup(machine.Clear)
 

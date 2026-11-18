@@ -8,19 +8,21 @@ import (
 	"strings"
 	"time"
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/middleware"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
 type Handler struct {
 	navigator *navigation.Navigator
+	isAdmin   middleware.AdminChecker
 	service   *ProfileService
 }
 
-func NewHandler(navigator *navigation.Navigator, service *ProfileService) *Handler {
-	return &Handler{navigator: navigator, service: service}
+func NewHandler(navigator *navigation.Navigator, service *ProfileService, isAdmin middleware.AdminChecker) *Handler {
+	return &Handler{navigator: navigator, service: service, isAdmin: isAdmin}
 }
-func Register(b *bot.Bot, navigator *navigation.Navigator, service *ProfileService) {
-	h := NewHandler(navigator, service)
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *ProfileService, isAdmin middleware.AdminChecker) {
+	h := NewHandler(navigator, service, isAdmin)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile", bot.MatchTypeExact, h.Begin)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:first_name", bot.MatchTypeExact, h.EditFirstName)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:last_name", bot.MatchTypeExact, h.EditLastName)
@@ -45,7 +47,7 @@ func (h *Handler) Begin(ctx context.Context, b *bot.Bot, update *models.Update) 
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	result, err := h.service.begin(dbCtx, q.From.ID)
-	view := h.page(q.From.ID, result)
+	view := h.page(ctx, q.From.ID, result)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "profile begin failed", "user_id", q.From.ID, "error", err)
@@ -63,7 +65,7 @@ func (h *Handler) EditFirstName(ctx context.Context, b *bot.Bot, update *models.
 	if q.Message.Message == nil {
 		return
 	}
-	view := h.page(q.From.ID, h.service.editFirstName(q.From.ID))
+	view := h.page(ctx, q.From.ID, h.service.editFirstName(q.From.ID))
 	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -76,7 +78,7 @@ func (h *Handler) EditLastName(ctx context.Context, b *bot.Bot, update *models.U
 	if q.Message.Message == nil {
 		return
 	}
-	view := h.page(q.From.ID, h.service.editLastName(q.From.ID))
+	view := h.page(ctx, q.From.ID, h.service.editLastName(q.From.ID))
 	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -89,7 +91,7 @@ func (h *Handler) EditSurname(ctx context.Context, b *bot.Bot, update *models.Up
 	if q.Message.Message == nil {
 		return
 	}
-	view := h.page(q.From.ID, h.service.editSurname(q.From.ID))
+	view := h.page(ctx, q.From.ID, h.service.editSurname(q.From.ID))
 	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -102,7 +104,7 @@ func (h *Handler) ClearSurname(ctx context.Context, b *bot.Bot, update *models.U
 	if q.Message.Message == nil {
 		return
 	}
-	view := h.page(q.From.ID, h.service.clearSurname(q.From.ID))
+	view := h.page(ctx, q.From.ID, h.service.clearSurname(q.From.ID))
 	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -117,7 +119,7 @@ func (h *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	result, err := h.service.confirm(dbCtx, q.From.ID)
-	view := h.page(q.From.ID, result)
+	view := h.page(ctx, q.From.ID, result)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "profile confirm failed", "user_id", q.From.ID, "error", err)
@@ -135,7 +137,7 @@ func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 	if q.Message.Message == nil {
 		return
 	}
-	view := h.page(q.From.ID, h.service.cancelEdit(q.From.ID))
+	view := h.page(ctx, q.From.ID, h.service.cancelEdit(q.From.ID))
 	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -144,7 +146,7 @@ func (h *Handler) FirstName(ctx context.Context, b *bot.Bot, update *models.Upda
 	if m == nil || m.From == nil {
 		return
 	}
-	view := h.page(m.From.ID, h.service.setFirstName(m.From.ID, m.Text))
+	view := h.page(ctx, m.From.ID, h.service.setFirstName(m.From.ID, m.Text))
 	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
 }
 
@@ -153,7 +155,7 @@ func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Updat
 	if m == nil || m.From == nil {
 		return
 	}
-	view := h.page(m.From.ID, h.service.setLastName(m.From.ID, m.Text))
+	view := h.page(ctx, m.From.ID, h.service.setLastName(m.From.ID, m.Text))
 	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
 }
 
@@ -162,7 +164,7 @@ func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update
 	if m == nil || m.From == nil {
 		return
 	}
-	view := h.page(m.From.ID, h.service.setSurname(m.From.ID, m.Text))
+	view := h.page(ctx, m.From.ID, h.service.setSurname(m.From.ID, m.Text))
 	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
 }
 
@@ -197,7 +199,7 @@ func (h *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, u
 			dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			result, err := h.service.begin(dbCtx, userID)
-			view := h.page(userID, result)
+			view := h.page(ctx, userID, result)
 			if err != nil {
 				return navigation.Page{}, err
 			}

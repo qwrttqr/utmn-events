@@ -70,17 +70,16 @@ type EventsService struct {
 	repo          Repository
 	tags          TagRepository
 	registrations RegistrationRepository
-	adminIDs      []int64
 	location      *time.Location
 	now           func() time.Time
 }
 
-func NewService(machine *fsm.FSM, repo Repository, tags TagRepository, registrations RegistrationRepository, adminIDs []int64) (*EventsService, error) {
+func NewService(machine *fsm.FSM, repo Repository, tags TagRepository, registrations RegistrationRepository) (*EventsService, error) {
 	location, err := time.LoadLocation("Asia/Yekaterinburg")
 	if err != nil {
 		return nil, err
 	}
-	return &EventsService{machine: machine, repo: repo, tags: tags, registrations: registrations, adminIDs: slices.Clone(adminIDs), location: location, now: time.Now}, nil
+	return &EventsService{machine: machine, repo: repo, tags: tags, registrations: registrations, location: location, now: time.Now}, nil
 }
 
 func (f *EventsService) Cancel(id int64) {
