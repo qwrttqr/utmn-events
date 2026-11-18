@@ -2,10 +2,9 @@ package profile
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -41,201 +40,150 @@ const (
 type session struct {
 	profile domain.User
 	field   profileField
-	token   string
 }
 
-type conversation struct {
-	session
-	state fsm.StateID
+type profileStatus uint8
+
+const (
+	profileStale profileStatus = iota + 1
+	profileCancelled
+	profileInvalidName
+	profileUpdated
+)
+
+type profileResult struct {
+	state   fsm.StateID
+	session session
+	status  profileStatus
 }
-type screen struct {
-	text  string
-	state fsm.StateID
-	token string
-}
+
 type ProfileService struct {
-	mu      sync.Mutex
-	repo    Repository
-	machine *fsm.FSM[string, session]
+	mu       sync.Mutex
+	repo     Repository
+	machine  *fsm.FSM
+	adminIDs []int64
 }
 
-func NewService(repo Repository) *ProfileService {
-	return &ProfileService{repo: repo, machine: fsm.NewInMemoryFSM[string, session]("idle")}
-}
-func (s *ProfileService) Cancel(userID int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.machine.Finish(context.Background(), userID); err != nil {
-		slog.Error("clear profile draft failed", "user_id", userID, "error", err)
-	}
+func NewService(machine *fsm.FSM, repo Repository, adminIDs []int64) *ProfileService {
+	return &ProfileService{repo: repo, machine: machine, adminIDs: slices.Clone(adminIDs)}
 }
 func (s *ProfileService) inState(userID int64, expected fsm.StateID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	state, err := s.machine.CurrentState(context.Background(), userID)
-	if err != nil {
-		slog.Error("load profile state failed", "error", err)
-		return false
-	}
-	return state == expected
+	return s.machine.CurrentState(userID) == expected
 }
-func (s *ProfileService) begin(ctx context.Context, userID int64) (screen, error) {
+func (s *ProfileService) begin(ctx context.Context, userID int64) (profileResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	user, err := s.repo.GetByTelegramID(ctx, userID)
 	if err != nil {
-		return screen{}, err
+		return profileResult{}, err
 	}
-	d := conversation{state: profileView, session: session{profile: user, token: rand.Text()}}
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return render(d), nil
+	state, d := profileView, session{profile: user}
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, session: d}, nil
 }
 
-func (s *ProfileService) editFirstName(ctx context.Context, userID int64, callback string) (screen, error) {
+func (s *ProfileService) editFirstName(userID int64) profileResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
+	state, d, exists := fsm.Load[session](s.machine, userID)
+	if !exists || state != profileView {
+		return profileResult{status: profileStale}
 	}
-	if !exists || d.state != profileView || callback != "user:profile:"+d.token+":first_name" {
-		return staleScreen(), nil
-	}
-	d.state, d.field, d.token = profileFirstName, firstNameField, rand.Text()
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return render(d), nil
+	state, d.field = profileFirstName, firstNameField
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, session: d}
 }
-func (s *ProfileService) setFirstName(ctx context.Context, userID int64, text string) (screen, error) {
+func (s *ProfileService) setFirstName(userID int64, text string) profileResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
-	}
-	if !exists || d.state != profileFirstName {
-		return staleScreen(), nil
+	state, d, exists := fsm.Load[session](s.machine, userID)
+	if !exists || state != profileFirstName {
+		return profileResult{status: profileStale}
 	}
 	text = strings.TrimSpace(text)
 	if !validName(text) {
-		view := render(d)
-		view.text = "Введите от 1 до 100 символов без команд и переносов строк.\n\n" + view.text
-		return view, nil
+		return profileResult{state: state, session: d, status: profileInvalidName}
 	}
-	d.profile.FirstName, d.state, d.token = text, profilePreview, rand.Text()
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return render(d), nil
+	d.profile.FirstName, state = text, profilePreview
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, session: d}
 }
 
-func (s *ProfileService) editLastName(ctx context.Context, userID int64, callback string) (screen, error) {
+func (s *ProfileService) editLastName(userID int64) profileResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
+	state, d, exists := fsm.Load[session](s.machine, userID)
+	if !exists || state != profileView {
+		return profileResult{status: profileStale}
 	}
-	if !exists || d.state != profileView || callback != "user:profile:"+d.token+":last_name" {
-		return staleScreen(), nil
-	}
-	d.state, d.field, d.token = profileLastName, lastNameField, rand.Text()
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return render(d), nil
+	state, d.field = profileLastName, lastNameField
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, session: d}
 }
-func (s *ProfileService) setLastName(ctx context.Context, userID int64, text string) (screen, error) {
+func (s *ProfileService) setLastName(userID int64, text string) profileResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
-	}
-	if !exists || d.state != profileLastName {
-		return staleScreen(), nil
+	state, d, exists := fsm.Load[session](s.machine, userID)
+	if !exists || state != profileLastName {
+		return profileResult{status: profileStale}
 	}
 	text = strings.TrimSpace(text)
 	if !validName(text) {
-		view := render(d)
-		view.text = "Введите от 1 до 100 символов без команд и переносов строк.\n\n" + view.text
-		return view, nil
+		return profileResult{state: state, session: d, status: profileInvalidName}
 	}
-	d.profile.LastName, d.state, d.token = text, profilePreview, rand.Text()
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return render(d), nil
+	d.profile.LastName, state = text, profilePreview
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, session: d}
 }
 
-func (s *ProfileService) editSurname(ctx context.Context, userID int64, callback string) (screen, error) {
+func (s *ProfileService) editSurname(userID int64) profileResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
+	state, d, exists := fsm.Load[session](s.machine, userID)
+	if !exists || state != profileView {
+		return profileResult{status: profileStale}
 	}
-	if !exists || d.state != profileView || callback != "user:profile:"+d.token+":surname" {
-		return staleScreen(), nil
-	}
-	d.state, d.field, d.token = profileSurname, surnameField, rand.Text()
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return render(d), nil
+	state, d.field = profileSurname, surnameField
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, session: d}
 }
-func (s *ProfileService) setSurname(ctx context.Context, userID int64, text string) (screen, error) {
+func (s *ProfileService) setSurname(userID int64, text string) profileResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
-	}
-	if !exists || d.state != profileSurname {
-		return staleScreen(), nil
+	state, d, exists := fsm.Load[session](s.machine, userID)
+	if !exists || state != profileSurname {
+		return profileResult{status: profileStale}
 	}
 	text = strings.TrimSpace(text)
 	if !validName(text) {
-		view := render(d)
-		view.text = "Введите от 1 до 100 символов без команд и переносов строк.\n\n" + view.text
-		return view, nil
+		return profileResult{state: state, session: d, status: profileInvalidName}
 	}
-	d.profile.Surname, d.state, d.token = text, profilePreview, rand.Text()
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return render(d), nil
+	d.profile.Surname, state = text, profilePreview
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, session: d}
 }
 
-func (s *ProfileService) clearSurname(ctx context.Context, userID int64, callback string) (screen, error) {
+func (s *ProfileService) clearSurname(userID int64) profileResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
+	state, d, exists := fsm.Load[session](s.machine, userID)
+	if !exists || state != profileSurname {
+		return profileResult{status: profileStale}
 	}
-	if !exists || d.state != profileSurname || callback != "user:profile:"+d.token+":clear_surname" {
-		return staleScreen(), nil
-	}
-	d.profile.Surname, d.state, d.token = "", profilePreview, rand.Text()
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return render(d), nil
+	d.profile.Surname, state = "", profilePreview
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, session: d}
 }
-func (s *ProfileService) confirm(ctx context.Context, userID int64, callback string) (screen, error) {
+func (s *ProfileService) confirm(ctx context.Context, userID int64) (profileResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
+	state, d, exists := fsm.Load[session](s.machine, userID)
+	if !exists || state != profilePreview {
+		return profileResult{status: profileStale}, nil
 	}
-	if !exists || d.state != profilePreview || callback != "user:profile:"+d.token+":save" {
-		return staleScreen(), nil
-	}
+	var err error
 	switch d.field {
 	case firstNameField:
 		err = s.repo.UpdateFirstName(ctx, userID, d.profile.FirstName)
@@ -244,97 +192,31 @@ func (s *ProfileService) confirm(ctx context.Context, userID int64, callback str
 	case surnameField:
 		err = s.repo.UpdateSurname(ctx, userID, d.profile.Surname)
 	default:
-		return screen{}, errors.New("invalid profile field")
+		return profileResult{}, errors.New("invalid profile field")
 	}
 	if err != nil {
-		return render(d), fmt.Errorf("save profile: %w", err)
+		return profileResult{state: state, session: d}, fmt.Errorf("save profile: %w", err)
 	}
 	user, err := s.repo.GetByTelegramID(ctx, userID)
 	if err != nil {
-		return render(d), err
+		return profileResult{state: state, session: d}, err
 	}
-	d = conversation{state: profileView, session: session{profile: user, token: rand.Text()}}
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	view := render(d)
-	view.text = "Профиль обновлён.\n\n" + view.text
-	return view, nil
+	state, d = profileView, session{profile: user}
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, session: d, status: profileUpdated}, nil
 }
-func (s *ProfileService) cancelEdit(ctx context.Context, userID int64, callback string) (screen, error) {
+
+func (s *ProfileService) cancelEdit(userID int64) profileResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
+	state, _, exists := fsm.Load[session](s.machine, userID)
+	if !exists || state == profileView {
+		return profileResult{status: profileStale}
 	}
-	if !exists || callback != "user:profile:"+d.token+":cancel" {
-		return staleScreen(), nil
-	}
-	user, err := s.repo.GetByTelegramID(ctx, userID)
-	if err != nil {
-		return render(d), err
-	}
-	d = conversation{state: profileView, session: session{profile: user, token: rand.Text()}}
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return render(d), nil
+	s.machine.Clear(userID)
+	return profileResult{status: profileCancelled}
 }
-func (f *ProfileService) load(ctx context.Context, userID int64) (conversation, bool, error) {
-	state, err := f.machine.CurrentState(ctx, userID)
-	if err != nil {
-		return conversation{}, false, err
-	}
-	if state == "idle" {
-		return conversation{}, false, nil
-	}
-	switch state {
-	case profileView, profileFirstName, profileLastName, profileSurname, profilePreview:
-	default:
-		return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
-	}
-	value, err := f.machine.GetData(ctx, userID, "session")
-	if errors.Is(err, fsm.ErrUserDataNotFound) {
-		return conversation{}, false, nil
-	}
-	if err != nil {
-		return conversation{}, false, err
-	}
-	return conversation{session: value, state: state}, true, nil
-}
-func (f *ProfileService) save(ctx context.Context, userID int64, value conversation) error {
-	switch value.state {
-	case profileView, profileFirstName, profileLastName, profileSurname, profilePreview:
-	default:
-		return fmt.Errorf("invalid conversation state %q", value.state)
-	}
-	if err := f.machine.SetData(ctx, userID, "session", value.session); err != nil {
-		return err
-	}
-	return f.machine.Transition(ctx, userID, value.state)
-}
+
 func validName(text string) bool {
 	return text != "" && utf8.RuneCountInString(text) <= 100 && !strings.HasPrefix(text, "/") && !strings.ContainsFunc(text, unicode.IsControl)
-}
-func render(d conversation) screen {
-	surname := d.profile.Surname
-	if surname == "" {
-		surname = "не указано"
-	}
-	text := fmt.Sprintf("Мой профиль\n\nИмя: %s\nФамилия: %s\nОтчество: %s", d.profile.FirstName, d.profile.LastName, surname)
-	switch d.state {
-	case profileFirstName:
-		text = "Введите новое имя."
-	case profileLastName:
-		text = "Введите новую фамилию."
-	case profileSurname:
-		text = "Введите новое отчество или нажмите «Убрать отчество»."
-	case profilePreview:
-		text = "Проверьте изменения:\n\n" + text
-	}
-	return screen{text: text, state: d.state, token: d.token}
-}
-func staleScreen() screen {
-	return screen{text: "Эта кнопка устарела. Откройте профиль заново."}
 }

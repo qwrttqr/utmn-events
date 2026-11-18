@@ -2,9 +2,7 @@ package announcements
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -25,20 +23,25 @@ const (
 )
 
 type draft struct {
-	token string
-	text  string
+	text string
 }
 
-type conversation struct {
-	draft
-	state fsm.StateID
-}
+type announcementStatus uint8
 
-type screen struct {
-	text     string
-	token    string
-	state    fsm.StateID
-	finished bool
+const (
+	announcementMissing announcementStatus = iota + 1
+	announcementCancelled
+	announcementStale
+	announcementTextRequired
+	announcementTooLong
+	broadcastInProgress
+	broadcastStarted
+)
+
+type announcementResult struct {
+	state  fsm.StateID
+	draft  draft
+	status announcementStatus
 }
 
 type delivery struct {
@@ -55,7 +58,7 @@ type report struct {
 type AnnouncementsService struct {
 	mu         sync.Mutex
 	repo       Repository
-	machine    *fsm.FSM[string, draft]
+	machine    *fsm.FSM
 	active     map[int64]bool
 	closed     bool
 	ctx        context.Context
@@ -64,11 +67,11 @@ type AnnouncementsService struct {
 	broadcasts chan struct{}
 }
 
-func NewService(ctx context.Context, repo Repository) *AnnouncementsService {
+func NewService(ctx context.Context, machine *fsm.FSM, repo Repository) *AnnouncementsService {
 	ctx, cancel := context.WithCancel(ctx)
 	return &AnnouncementsService{
 		repo:       repo,
-		machine:    fsm.NewInMemoryFSM[string, draft]("idle"),
+		machine:    machine,
 		active:     make(map[int64]bool),
 		ctx:        ctx,
 		cancel:     cancel,
@@ -84,128 +87,89 @@ func (s *AnnouncementsService) Close() {
 	s.workers.Wait()
 }
 
-func (s *AnnouncementsService) Cancel(userID int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.machine.Finish(context.Background(), userID); err != nil {
-		slog.Error("clear announcement draft failed", "user_id", userID, "error", err)
-	}
-}
-
 func (s *AnnouncementsService) enteringText(userID int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	state, err := s.machine.CurrentState(context.Background(), userID)
-	if err != nil {
-		slog.Error("read announcement state failed", "error", err)
-		return false
-	}
-	return state == textState
+	return s.machine.CurrentState(userID) == textState
 }
 
-func (s *AnnouncementsService) begin(ctx context.Context, userID int64) (screen, error) {
+func (s *AnnouncementsService) begin(userID int64) announcementResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.active[userID] {
-		return screen{text: "Ваше объявление уже рассылается. Дождитесь отчёта.", finished: true}, nil
+		return announcementResult{status: broadcastInProgress}
 	}
-	d := conversation{state: textState, draft: draft{token: rand.Text()}}
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return draftScreen(d), nil
+	d := draft{}
+	s.machine.Replace(userID, textState, d)
+	return announcementResult{state: textState, draft: d}
 }
 
-func (s *AnnouncementsService) setText(ctx context.Context, userID int64, text string) (screen, error) {
+func (s *AnnouncementsService) setText(userID int64, text string) announcementResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
-	}
-	if !exists || d.state != textState {
-		return screen{text: "Откройте создание объявления заново.", finished: true}, nil
+	state, d, exists := fsm.Load[draft](s.machine, userID)
+	if !exists || state != textState {
+		return announcementResult{status: announcementMissing}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		view := draftScreen(d)
-		view.text = "Отправьте текст объявления.\n\n" + view.text
-		return view, nil
+		return announcementResult{state: state, draft: d, status: announcementTextRequired}
 	}
 	length := 0
 	for _, r := range text {
 		length += utf16.RuneLen(r)
 	}
 	if length > 4000 {
-		view := draftScreen(d)
-		view.text = "Текст слишком длинный: максимум 4000 символов, эмодзи могут занимать два символа.\n\n" + view.text
-		return view, nil
+		return announcementResult{state: state, draft: d, status: announcementTooLong}
 	}
-	d.text, d.state, d.token = text, previewState, rand.Text()
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return draftScreen(d), nil
+	d.text, state = text, previewState
+	s.machine.Replace(userID, state, d)
+	return announcementResult{state: state, draft: d}
 }
 
-func (s *AnnouncementsService) edit(ctx context.Context, userID int64, callback string) (screen, error) {
+func (s *AnnouncementsService) edit(userID int64) announcementResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
+	state, d, exists := fsm.Load[draft](s.machine, userID)
+	if !exists || state != previewState {
+		return announcementResult{status: announcementStale}
 	}
-	if !exists || !validCallback(d, callback, "edit") || d.state != previewState {
-		return staleScreen(), nil
-	}
-	d.state, d.token = textState, rand.Text()
-	if err := s.save(ctx, userID, d); err != nil {
-		return screen{}, err
-	}
-	return draftScreen(d), nil
+	state = textState
+	s.machine.Replace(userID, state, d)
+	return announcementResult{state: state, draft: d}
 }
 
-func (s *AnnouncementsService) cancelDraft(ctx context.Context, userID int64, callback string) (screen, error) {
+func (s *AnnouncementsService) cancelDraft(userID int64) announcementResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, err
+	state, _, exists := fsm.Load[draft](s.machine, userID)
+	if !exists || (state != textState && state != previewState) {
+		return announcementResult{status: announcementStale}
 	}
-	if !exists || !validCallback(d, callback, "cancel") {
-		return staleScreen(), nil
-	}
-	if err := s.machine.Finish(ctx, userID); err != nil {
-		return screen{}, err
-	}
-	return screen{text: "Создание объявления отменено.", finished: true}, nil
+	s.machine.Clear(userID)
+	return announcementResult{status: announcementCancelled}
 }
 
-func (s *AnnouncementsService) prepareSend(ctx context.Context, userID int64, callback string) (screen, *delivery, error) {
+func (s *AnnouncementsService) prepareSend(userID int64) (announcementResult, *delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || s.ctx.Err() != nil {
-		return screen{}, nil, errors.New("announcement service stopped")
+		return announcementResult{}, nil, errors.New("announcement service stopped")
 	}
 	if s.active[userID] {
-		return screen{text: "Ваше объявление уже рассылается. Дождитесь отчёта.", finished: true}, nil, nil
+		return announcementResult{status: broadcastInProgress}, nil, nil
 	}
-	d, exists, err := s.load(ctx, userID)
-	if err != nil {
-		return screen{}, nil, err
+	state, d, exists := fsm.Load[draft](s.machine, userID)
+	if !exists || state != previewState {
+		return announcementResult{status: announcementStale}, nil, nil
 	}
-	if !exists || d.state != previewState || !validCallback(d, callback, "send") {
-		return staleScreen(), nil, nil
-	}
-	if err := s.machine.Finish(ctx, userID); err != nil {
-		return screen{}, nil, err
-	}
+	s.machine.Clear(userID)
 	s.active[userID] = true
 	s.workers.Add(1)
-	return screen{text: "Рассылка началась. После завершения придёт отчёт.", finished: true}, &delivery{authorID: userID, text: "Объявление\n\n" + d.text}, nil
+	return announcementResult{status: broadcastStarted}, &delivery{authorID: userID, text: d.text}, nil
 }
 
-func (s *AnnouncementsService) send(job delivery, sendMessage func(context.Context, int64, string) error) {
+func (s *AnnouncementsService) send(job delivery, sendMessage func(context.Context, int64, string) error, sendReport func(context.Context, int64, report) error) {
 	defer s.workers.Done()
 	defer func() {
 		s.mu.Lock()
@@ -235,7 +199,7 @@ func (s *AnnouncementsService) send(job delivery, sendMessage func(context.Conte
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 		defer cancel()
-		if err := sendMessage(ctx, job.authorID, reportText(result)); err != nil {
+		if err := sendReport(ctx, job.authorID, result); err != nil {
 			slog.ErrorContext(ctx, "send announcement report failed", "author_id", job.authorID, "error", err)
 		}
 	}()
@@ -295,63 +259,4 @@ func (s *AnnouncementsService) send(job delivery, sendMessage func(context.Conte
 		}
 		afterID = recipients[len(recipients)-1]
 	}
-}
-
-func (f *AnnouncementsService) load(ctx context.Context, userID int64) (conversation, bool, error) {
-	state, err := f.machine.CurrentState(ctx, userID)
-	if err != nil {
-		return conversation{}, false, err
-	}
-	if state == "idle" {
-		return conversation{}, false, nil
-	}
-	switch state {
-	case textState, previewState:
-	default:
-		return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
-	}
-	value, err := f.machine.GetData(ctx, userID, "draft")
-	if errors.Is(err, fsm.ErrUserDataNotFound) {
-		return conversation{}, false, nil
-	}
-	if err != nil {
-		return conversation{}, false, err
-	}
-	return conversation{draft: value, state: state}, true, nil
-}
-
-func (f *AnnouncementsService) save(ctx context.Context, userID int64, value conversation) error {
-	switch value.state {
-	case textState, previewState:
-	default:
-		return fmt.Errorf("invalid conversation state %q", value.state)
-	}
-	if err := f.machine.SetData(ctx, userID, "draft", value.draft); err != nil {
-		return err
-	}
-	return f.machine.Transition(ctx, userID, value.state)
-}
-
-func validCallback(d conversation, callback, action string) bool {
-	return callback == "admin:announcement:"+d.token+":"+action
-}
-
-func draftScreen(d conversation) screen {
-	text := "Создание объявления."
-	if d.state == previewState {
-		text = "Проверьте объявление:\n\n" + d.text + "\n\nОтправить?"
-	}
-	return screen{text: text, token: d.token, state: d.state}
-}
-
-func staleScreen() screen {
-	return screen{text: "Эта кнопка устарела. Откройте создание объявления заново.", finished: true}
-}
-
-func reportText(result report) string {
-	text := fmt.Sprintf("Рассылка завершена.\nДоставлено: %d\nНе удалось доставить: %d", result.sent, result.failed)
-	if result.err != nil {
-		text = fmt.Sprintf("Рассылка прервана.\nДоставлено: %d\nНе удалось доставить: %d\nОстальные пользователи не получили объявление.", result.sent, result.failed)
-	}
-	return text
 }

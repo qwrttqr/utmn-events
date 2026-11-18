@@ -9,7 +9,7 @@ import (
 
 func DefaultPage(userID int64, adminIDs []int64) navigation.Page {
 	if slices.Contains(adminIDs, userID) {
-		return adminmenu.Page()
+		return adminmenu.GetMainPage()
 	}
 	return MenuPage(userID, adminIDs)
 }

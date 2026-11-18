@@ -12,20 +12,17 @@ import (
 	"utmn-events-bot/internal/domain"
 )
 
-type registrationDB interface {
-	Begin(context.Context) (pgx.Tx, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
+type EventRegistrationRepository struct {
+	pool *pgxpool.Pool
 }
 
-type EventRegistrationRepository struct{ db registrationDB }
-
 func NewEventRegistrationRepository(pool *pgxpool.Pool) *EventRegistrationRepository {
-	return &EventRegistrationRepository{db: pool}
+	return &EventRegistrationRepository{pool: pool}
 }
 
 func (r *EventRegistrationRepository) IsEnrolled(ctx context.Context, eventID, telegramID int64) (bool, error) {
 	var enrolled bool
-	err := r.db.QueryRow(ctx, `SELECT EXISTS (
+	err := r.pool.QueryRow(ctx, `SELECT EXISTS (
 		SELECT 1 FROM event_registrations er JOIN users u ON u.id = er.user_id
 		WHERE er.event_id = $1 AND u.tg_id = $2)`, eventID, telegramID).Scan(&enrolled)
 	if err != nil {
@@ -35,7 +32,7 @@ func (r *EventRegistrationRepository) IsEnrolled(ctx context.Context, eventID, t
 }
 
 func (r *EventRegistrationRepository) Enroll(ctx context.Context, eventID, telegramID int64) error {
-	tx, err := r.db.Begin(ctx)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin enrollment: %w", err)
 	}
@@ -90,7 +87,7 @@ func (r *EventRegistrationRepository) Enroll(ctx context.Context, eventID, teleg
 }
 
 func (r *EventRegistrationRepository) Unenroll(ctx context.Context, eventID, telegramID int64) error {
-	tx, err := r.db.Begin(ctx)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin unenrollment: %w", err)
 	}

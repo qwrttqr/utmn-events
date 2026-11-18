@@ -93,7 +93,7 @@ func TestBackHomeAndRefreshRestoreWithoutRepeatingActions(t *testing.T) {
 		t.Fatal("refresh changed history or lost state")
 	}
 	navigate(n, b, "home")
-	if state != "" || len(n.sessions[1].history) != 1 || cleanups != 3 {
+	if state != "" || len(n.sessions[1].history) != 1 || cleanups != 1 {
 		t.Fatal("Home did not clear state and history")
 	}
 	if api.sends != 1 || api.edits != 5 {
@@ -121,6 +121,42 @@ func TestRefreshReplacesHistoryAndCompletedActionCannotBeReopened(t *testing.T) 
 	navigate(n, b, "back")
 	if n.sessions[1].history[0].Key != "home" || len(n.sessions[1].history) != 1 {
 		t.Fatal("Back reopened completed action")
+	}
+}
+
+func TestBackRestoresSeparateVisitsToSameStep(t *testing.T) {
+	n, b, _ := setup(t)
+	var restoredDraft string
+	step := func(key, draft string) Page {
+		page := Page{Key: key, Text: draft, History: HistoryPush}
+		page.Restore = func(context.Context) (Page, error) {
+			restoredDraft = draft
+			return page, nil
+		}
+		return page
+	}
+	show(t, n, b, step("start", "initial draft"))
+	show(t, n, b, step("preview", "draft ready to save"))
+	show(t, n, b, step("start", "draft needs new dates"))
+
+	retry := step("start", "draft needs new dates")
+	retry.Text = "Invalid date. Try again."
+	retry.History = HistoryMatchCurrent
+	show(t, n, b, retry)
+	if history := n.sessions[1].history; len(history) != 4 || history[3].Text != retry.Text {
+		t.Fatalf("retry did not replace only the current visit: %+v", history)
+	}
+	navigate(n, b, "refresh")
+	if restoredDraft != "draft needs new dates" || len(n.sessions[1].history) != 4 {
+		t.Fatal("Refresh lost the current visit")
+	}
+	navigate(n, b, "back")
+	if restoredDraft != "draft ready to save" {
+		t.Fatalf("Back restored %q instead of the preview draft", restoredDraft)
+	}
+	navigate(n, b, "back")
+	if restoredDraft != "initial draft" {
+		t.Fatalf("Back restored %q instead of the initial draft", restoredDraft)
 	}
 }
 

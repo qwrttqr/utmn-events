@@ -1,11 +1,30 @@
 package tags
 
-import "github.com/go-telegram/bot/models"
+import (
+	"github.com/go-telegram/bot/models"
 
-func keyboard(view screen) *models.InlineKeyboardMarkup {
-	markup := &models.InlineKeyboardMarkup{}
-	for _, button := range view.buttons {
-		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{{Text: button.text, CallbackData: button.data}})
+	"utmn-events-bot/internal/telegram/navigation"
+)
+
+func tagKeyboard(buttons ...button) *models.InlineKeyboardMarkup {
+	page := navigation.Page{}
+	addTagButtons(&page, buttons...)
+	return page.Keyboard
+}
+
+func addTagButtons(page *navigation.Page, buttons ...button) {
+	if page.Keyboard == nil {
+		page.Keyboard = &models.InlineKeyboardMarkup{}
 	}
-	return markup
+	for _, button := range buttons {
+		page.Keyboard.InlineKeyboard = append(page.Keyboard.InlineKeyboard, []models.InlineKeyboardButton{
+			{Text: button.text, CallbackData: button.data},
+		})
+	}
+}
+
+type button struct{ text, data string }
+
+func (s session) button(text, action string) button {
+	return button{text, "admin:tag:" + s.token + ":" + action}
 }

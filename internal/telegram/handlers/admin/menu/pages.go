@@ -2,7 +2,7 @@ package menu
 
 import "utmn-events-bot/internal/telegram/navigation"
 
-func Page() navigation.Page {
+func GetMainPage() navigation.Page {
 	return navigation.Page{Key: "admin:menu", Text: "Панель администратора\nВыберите действие:", Keyboard: menuKeyboard(), Admin: true, Root: true}
 }
 func unknownPage(key string) navigation.Page {

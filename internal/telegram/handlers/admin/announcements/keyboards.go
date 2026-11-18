@@ -1,17 +1,21 @@
 package announcements
 
-import "github.com/go-telegram/bot/models"
+import (
+	"github.com/go-telegram/bot/models"
 
-func announcementKeyboard(view screen) *models.InlineKeyboardMarkup {
+	"utmn-events-bot/internal/fsm"
+)
+
+func announcementKeyboard(state fsm.StateID) *models.InlineKeyboardMarkup {
 	markup := &models.InlineKeyboardMarkup{}
-	if view.state == previewState {
+	if state == previewState {
 		markup.InlineKeyboard = append(markup.InlineKeyboard,
-			[]models.InlineKeyboardButton{{Text: "Отправить", CallbackData: "admin:announcement:" + view.token + ":send"}},
-			[]models.InlineKeyboardButton{{Text: "Изменить текст", CallbackData: "admin:announcement:" + view.token + ":edit"}},
+			[]models.InlineKeyboardButton{{Text: "Отправить", CallbackData: "admin:announcement:send"}},
+			[]models.InlineKeyboardButton{{Text: "Изменить текст", CallbackData: "admin:announcement:edit"}},
 		)
 	}
-	if view.token != "" {
-		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{{Text: "Отменить", CallbackData: "admin:announcement:" + view.token + ":cancel"}})
+	if state == textState || state == previewState {
+		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{{Text: "Отменить", CallbackData: "admin:announcement:cancel"}})
 	} else {
 		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{{Text: "Панель администратора", CallbackData: "admin:menu"}})
 	}

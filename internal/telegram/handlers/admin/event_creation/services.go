@@ -2,10 +2,8 @@ package event_creation
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,74 +32,67 @@ const eventDateLayout = "02.01.2006 15:04"
 
 type eventDraft struct {
 	event           domain.Event
-	token           string
 	returnToPreview bool
 }
 
-type conversation struct {
-	eventDraft
-	state fsm.StateID
-}
+type creationStatus uint8
 
-type eventButton struct {
-	text string
-	data string
-}
+const (
+	stepStarted creationStatus = iota + 1
+	noActiveDraft
+	creationCancelled
+	eventCreated
+	stepAlreadyCompleted
+	textRequired
+	invalidTitle
+	descriptionTooLong
+	photoRequired
+	locationTooLong
+	invalidDateFormat
+	startMustBeFuture
+	endMustFollowStart
+	invalidCapacity
+	tagsTooLong
+	invalidTag
+	invalidTagCount
+	saveFailed
+	startExpired
+	staleAction
+)
 
-type eventScreen struct {
-	text    string
-	buttons []eventButton
-	photoID string
+type creationResult struct {
+	state   fsm.StateID
+	draft   eventDraft
+	status  creationStatus
+	eventID int64
 }
 
 type EventCreationService struct {
 	mu       sync.Mutex
-	machine  *fsm.FSM[string, eventDraft]
+	machine  *fsm.FSM
 	repo     Repository
 	location *time.Location
 	now      func() time.Time
 }
 
-func NewService(repository Repository) (*EventCreationService, error) {
+func NewService(machine *fsm.FSM, repository Repository) (*EventCreationService, error) {
 	location, err := time.LoadLocation("Asia/Yekaterinburg")
 	if err != nil {
 		return nil, fmt.Errorf("load event timezone: %w", err)
 	}
-	flow := &EventCreationService{repo: repository, machine: fsm.NewInMemoryFSM[string, eventDraft]("idle"), location: location, now: time.Now}
+	flow := &EventCreationService{repo: repository, machine: machine, location: location, now: time.Now}
 	return flow, nil
 }
 
-func (f *EventCreationService) Cancel(userID int64) {
+func (f *EventCreationService) begin(userID int64) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.clear(userID)
+	d := eventDraft{}
+	f.machine.Replace(userID, eventTitle, d)
+	return creationResult{state: eventTitle, draft: d, status: stepStarted}
 }
 
-func (f *EventCreationService) HasDraft(userID int64) bool {
-	ctx := context.Background()
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	_, ok, err := f.load(ctx, userID)
-	if err != nil {
-		reportStorageError(err)
-		return false
-	}
-	return ok
-}
-
-func (f *EventCreationService) begin(userID int64) eventScreen {
-	ctx := context.Background()
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	d := conversation{state: eventTitle, eventDraft: eventDraft{token: rand.Text()}}
-	if err := f.save(ctx, userID, d); err != nil {
-		reportStorageError(err)
-		return eventScreen{text: "Не удалось начать создание мероприятия."}
-	}
-	return f.prompt(d)
-}
-
-func cloneDraft(d conversation) conversation {
+func cloneDraft(d eventDraft) eventDraft {
 	d.event.Tags = slices.Clone(d.event.Tags)
 	if d.event.Capacity != nil {
 		capacity := *d.event.Capacity
@@ -110,425 +101,267 @@ func cloneDraft(d conversation) conversation {
 	return d
 }
 
-func reportStorageError(err error) {
-	slog.Error("conversation storage failed", "error", err)
-}
-
-func (f *EventCreationService) load(ctx context.Context, userID int64) (conversation, bool, error) {
-	state, err := f.machine.CurrentState(ctx, userID)
-	if err != nil {
-		return conversation{}, false, err
-	}
-	if state == "idle" {
-		return conversation{}, false, nil
-	}
-	switch state {
-	case eventTitle, eventDescription, eventPhoto, eventLocation, eventStart, eventEnd, eventCapacity, eventTags, eventPreview:
-	default:
-		return conversation{}, false, fmt.Errorf("unexpected conversation state %q", state)
-	}
-	value, err := f.machine.GetData(ctx, userID, "session")
-	if errors.Is(err, fsm.ErrUserDataNotFound) {
-		return conversation{}, false, nil
-	}
-	if err != nil {
-		return conversation{}, false, err
-	}
-	return conversation{eventDraft: value, state: state}, true, nil
-}
-func (f *EventCreationService) save(ctx context.Context, userID int64, value conversation) error {
-	switch value.state {
-	case eventTitle, eventDescription, eventPhoto, eventLocation, eventStart, eventEnd, eventCapacity, eventTags, eventPreview:
-	default:
-		return fmt.Errorf("invalid conversation state %q", value.state)
-	}
-	if err := f.machine.SetData(ctx, userID, "session", value.eventDraft); err != nil {
-		return err
-	}
-	return f.machine.Transition(ctx, userID, value.state)
-}
-func (f *EventCreationService) clear(userID int64) {
-	if err := f.machine.Finish(context.Background(), userID); err != nil {
-		reportStorageError(err)
-	}
-}
-
-func (f *EventCreationService) completeStep(ctx context.Context, userID int64, d conversation) (eventScreen, error) {
-	d.token = rand.Text()
-	previous := d.state
+func (f *EventCreationService) completeStep(userID int64, state fsm.StateID, d eventDraft) creationResult {
+	previous := state
 	switch previous {
 	case eventTitle:
-		d.state = eventDescription
+		state = eventDescription
 	case eventDescription:
-		d.state = eventPhoto
+		state = eventPhoto
 	case eventPhoto:
-		d.state = eventLocation
+		state = eventLocation
 	case eventLocation:
-		d.state = eventStart
+		state = eventStart
 	case eventStart:
-		d.state = eventEnd
+		state = eventEnd
 	case eventEnd:
-		d.state = eventCapacity
+		state = eventCapacity
 	case eventCapacity:
-		d.state = eventTags
+		state = eventTags
 	case eventTags:
-		d.state = eventPreview
+		state = eventPreview
 	}
 	if previous == eventEnd && d.returnToPreview {
-		d.state, d.returnToPreview = eventPreview, false
+		state, d.returnToPreview = eventPreview, false
 	}
-	if err := f.save(ctx, userID, d); err != nil {
-		return eventScreen{}, err
-	}
-	return f.prompt(d), nil
+	f.machine.Replace(userID, state, d)
+	return creationResult{state: state, draft: d, status: stepStarted}
 }
 
-func (f *EventCreationService) cancelForm(ctx context.Context, userID int64, callback string) (eventScreen, error) {
+func (f *EventCreationService) cancelForm(userID int64) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	_, _, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
-	}
-	parts := strings.Split(callback, ":")
-	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event" || parts[2] != d.token || parts[3] != "cancel" {
-		return f.invalid(d, "Эта кнопка устарела."), nil
+		return creationResult{status: noActiveDraft}
 	}
 
-	f.clear(userID)
-	return eventScreen{text: "Создание мероприятия отменено."}, nil
+	f.machine.Clear(userID)
+	return creationResult{status: creationCancelled}
 }
 
-func (f *EventCreationService) button(d conversation, text, action string) eventButton {
-	return eventButton{text, fmt.Sprintf("admin:event:%s:%s", d.token, action)}
-}
-
-func (f *EventCreationService) prompt(d conversation) eventScreen {
-	var view eventScreen
-	switch d.state {
-	case eventTitle:
-		view = eventScreen{text: "Создание мероприятия\nВведите название."}
-	case eventDescription:
-		view = f.descriptionPrompt(d)
-	case eventPhoto:
-		view = f.photoPrompt(d)
-	case eventLocation:
-		view = eventScreen{text: "Введите место проведения (адрес, аудитория)."}
-	case eventStart:
-		view = f.startPrompt()
-	case eventEnd:
-		view = f.endPrompt(d)
-	case eventCapacity:
-		view = f.capacityPrompt(d)
-	case eventTags:
-		view = f.tagsPrompt(d)
-	case eventPreview:
-		view = f.previewPrompt(d)
-	}
-	cancelText := "Отменить создание"
-
-	view.buttons = append(view.buttons, f.button(d, cancelText, "cancel"))
-	return view
-}
-
-func (f *EventCreationService) invalid(d conversation, message string) eventScreen {
-	view := f.prompt(d)
-	view.text = message + "\n\n" + view.text
-	return view
-}
-
-func (f *EventCreationService) setTitle(ctx context.Context, userID int64, text string) (eventScreen, error) {
+func (f *EventCreationService) setTitle(userID int64, text string) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	if d.state != eventTitle {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventTitle {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return f.invalid(d, "Отправьте текст для текущего шага."), nil
+		return creationResult{state: state, draft: d, status: textRequired}
 	}
 
 	if utf8.RuneCountInString(text) > 200 || strings.ContainsAny(text, "\r\n") {
-		return f.invalid(d, "Название должно быть в одну строку, до 200 символов."), nil
+		return creationResult{state: state, draft: d, status: invalidTitle}
 	}
 	d.event.Title = text
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) setDescription(ctx context.Context, userID int64, text string) (eventScreen, error) {
+func (f *EventCreationService) setDescription(userID int64, text string) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	if d.state != eventDescription {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventDescription {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return f.invalid(d, "Отправьте текст для текущего шага."), nil
+		return creationResult{state: state, draft: d, status: textRequired}
 	}
 
 	if utf8.RuneCountInString(text) > 2000 {
-		return f.invalid(d, "Описание должно быть не длиннее 2000 символов."), nil
+		return creationResult{state: state, draft: d, status: descriptionTooLong}
 	}
 	d.event.Description = text
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) skipDescription(ctx context.Context, userID int64, callback string) (eventScreen, error) {
+func (f *EventCreationService) skipDescription(userID int64) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	parts := strings.Split(callback, ":")
-	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event" || parts[2] != d.token || parts[3] != "skip" {
-		return f.invalid(d, "Эта кнопка устарела."), nil
-	}
-	if d.state != eventDescription {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventDescription {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 
 	d.event.Description = ""
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) descriptionPrompt(d conversation) eventScreen {
-	return eventScreen{text: "Введите описание мероприятия.", buttons: []eventButton{f.button(d, "Пропустить", "skip")}}
-}
-
-func (f *EventCreationService) setPhoto(ctx context.Context, userID int64, photo string) (eventScreen, error) {
+func (f *EventCreationService) setPhoto(userID int64, photo string) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	if d.state != eventPhoto {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventPhoto {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 
 	if photo == "" {
-		return f.invalid(d, "Отправьте изображение как фото или нажмите «Пропустить»."), nil
+		return creationResult{state: state, draft: d, status: photoRequired}
 	}
 	d.event.PhotoFileID = photo
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) skipPhoto(ctx context.Context, userID int64, callback string) (eventScreen, error) {
+func (f *EventCreationService) skipPhoto(userID int64) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	parts := strings.Split(callback, ":")
-	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event" || parts[2] != d.token || parts[3] != "skip" {
-		return f.invalid(d, "Эта кнопка устарела."), nil
-	}
-	if d.state != eventPhoto {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventPhoto {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 
 	d.event.PhotoFileID = ""
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) photoPrompt(d conversation) eventScreen {
-	return eventScreen{text: "Отправьте фото мероприятия.", buttons: []eventButton{f.button(d, "Пропустить", "skip")}}
-}
-
-func (f *EventCreationService) setLocation(ctx context.Context, userID int64, text string) (eventScreen, error) {
+func (f *EventCreationService) setLocation(userID int64, text string) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	if d.state != eventLocation {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventLocation {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return f.invalid(d, "Отправьте текст для текущего шага."), nil
+		return creationResult{state: state, draft: d, status: textRequired}
 	}
 
 	if utf8.RuneCountInString(text) > 300 {
-		return f.invalid(d, "Место должно быть не длиннее 300 символов."), nil
+		return creationResult{state: state, draft: d, status: locationTooLong}
 	}
 	d.event.Location = text
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) setStart(ctx context.Context, userID int64, text string) (eventScreen, error) {
+func (f *EventCreationService) setStart(userID int64, text string) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	if d.state != eventStart {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventStart {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return f.invalid(d, "Отправьте текст для текущего шага."), nil
+		return creationResult{state: state, draft: d, status: textRequired}
 	}
 
 	value, err := time.ParseInLocation(eventDateLayout, text, f.location)
 	if err != nil {
-		return f.invalid(d, "Используйте формат ДД.ММ.ГГГГ ЧЧ:ММ."), nil
+		return creationResult{state: state, draft: d, status: invalidDateFormat}
 	}
 	if !value.After(f.now()) {
-		return f.invalid(d, "Начало должно быть в будущем."), nil
+		return creationResult{state: state, draft: d, status: startMustBeFuture}
 	}
 	d.event.StartsAt = value.UTC()
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) setEnd(ctx context.Context, userID int64, text string) (eventScreen, error) {
+func (f *EventCreationService) setEnd(userID int64, text string) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	if d.state != eventEnd {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventEnd {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return f.invalid(d, "Отправьте текст для текущего шага."), nil
+		return creationResult{state: state, draft: d, status: textRequired}
 	}
 
 	value, err := time.ParseInLocation(eventDateLayout, text, f.location)
 	if err != nil {
-		return f.invalid(d, "Используйте формат ДД.ММ.ГГГГ ЧЧ:ММ."), nil
+		return creationResult{state: state, draft: d, status: invalidDateFormat}
 	}
 	if !value.After(d.event.StartsAt) {
-		return f.invalid(d, "Окончание должно быть позже начала."), nil
+		return creationResult{state: state, draft: d, status: endMustFollowStart}
 	}
 	d.event.EndsAt = value.UTC()
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) startPrompt() eventScreen {
-	example := f.now().In(f.location).Truncate(time.Minute).Add(time.Minute)
-	return eventScreen{text: "Введите дату и время начала: ДД.ММ.ГГГГ ЧЧ:ММ.\nНапример: " + example.Format(eventDateLayout)}
-}
-
-func (f *EventCreationService) endPrompt(d conversation) eventScreen {
-	example := d.event.StartsAt.In(f.location).Add(time.Hour)
-	return eventScreen{text: "Введите дату и время окончания: ДД.ММ.ГГГГ ЧЧ:ММ.\nНапример: " + example.Format(eventDateLayout)}
-}
-
-func (f *EventCreationService) setCapacity(ctx context.Context, userID int64, text string) (eventScreen, error) {
+func (f *EventCreationService) setCapacity(userID int64, text string) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	if d.state != eventCapacity {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventCapacity {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return f.invalid(d, "Отправьте текст для текущего шага."), nil
+		return creationResult{state: state, draft: d, status: textRequired}
 	}
 
 	value, err := strconv.ParseInt(text, 10, 32)
 	if err != nil || value <= 0 {
-		return f.invalid(d, "Введите положительное целое число или нажмите «Без ограничений»."), nil
+		return creationResult{state: state, draft: d, status: invalidCapacity}
 	}
 	capacity := int32(value)
 	d.event.Capacity = &capacity
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) unlimitedCapacity(ctx context.Context, userID int64, callback string) (eventScreen, error) {
+func (f *EventCreationService) unlimitedCapacity(userID int64) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	parts := strings.Split(callback, ":")
-	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event" || parts[2] != d.token || parts[3] != "skip" {
-		return f.invalid(d, "Эта кнопка устарела."), nil
-	}
-	if d.state != eventCapacity {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventCapacity {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 
 	d.event.Capacity = nil
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) capacityPrompt(d conversation) eventScreen {
-	return eventScreen{text: "Введите максимальное количество участников.", buttons: []eventButton{f.button(d, "Без ограничений", "skip")}}
-}
-
-func (f *EventCreationService) setTags(ctx context.Context, userID int64, text string) (eventScreen, error) {
+func (f *EventCreationService) setTags(userID int64, text string) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	if d.state != eventTags {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventTags {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return f.invalid(d, "Отправьте текст для текущего шага."), nil
+		return creationResult{state: state, draft: d, status: textRequired}
 	}
 
 	if utf8.RuneCountInString(text) > 400 {
-		return f.invalid(d, "Список тегов должен быть не длиннее 400 символов."), nil
+		return creationResult{state: state, draft: d, status: tagsTooLong}
 	}
 	seen := make(map[string]bool)
 	var tags []string
@@ -538,148 +371,86 @@ func (f *EventCreationService) setTags(ctx context.Context, userID int64, text s
 			continue
 		}
 		if utf8.RuneCountInString(tag) > 40 || strings.ContainsAny(tag, "\r\n") {
-			return f.invalid(d, "Каждый тег должен быть в одну строку, до 40 символов."), nil
+			return creationResult{state: state, draft: d, status: invalidTag}
 		}
 		seen[tag] = true
 		tags = append(tags, tag)
 	}
 	if len(tags) == 0 || len(tags) > 10 {
-		return f.invalid(d, "Введите от 1 до 10 тегов или нажмите «Пропустить»."), nil
+		return creationResult{state: state, draft: d, status: invalidTagCount}
 	}
 	d.event.Tags = tags
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) skipTags(ctx context.Context, userID int64, callback string) (eventScreen, error) {
+func (f *EventCreationService) skipTags(userID int64) creationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}
 	}
-	parts := strings.Split(callback, ":")
-	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event" || parts[2] != d.token || parts[3] != "skip" {
-		return f.invalid(d, "Эта кнопка устарела."), nil
-	}
-	if d.state != eventTags {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventTags {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
 	}
 
 	d.event.Tags = nil
-	return f.completeStep(ctx, userID, d)
+	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) tagsPrompt(d conversation) eventScreen {
-	return eventScreen{text: "Введите теги через точку с запятой: лекция; спорт.", buttons: []eventButton{f.button(d, "Пропустить", "skip")}}
-}
-
-func (f *EventCreationService) confirmEvent(ctx context.Context, userID int64, callback string) (eventScreen, error) {
+func (f *EventCreationService) confirmEvent(ctx context.Context, userID int64) (creationResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
+		return creationResult{status: noActiveDraft}, nil
 	}
-	parts := strings.Split(callback, ":")
-	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event" || parts[2] != d.token || parts[3] != "save" {
-		return f.invalid(d, "Эта кнопка устарела."), nil
-	}
-	if d.state != eventPreview {
-		return f.invalid(d, "Этот шаг уже завершён."), nil
+	if state != eventPreview {
+		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}, nil
 	}
 
 	if !d.event.StartsAt.After(f.now()) {
-		return f.reenterDates(ctx, userID, d)
+		return f.reenterDates(userID, d), nil
 	}
 	id, err := f.Create(ctx, d.event)
 	if errors.Is(err, domain.ErrEventStartInPast) {
-		return f.reenterDates(ctx, userID, d)
+		return f.reenterDates(userID, d), nil
 	}
 
 	if err != nil {
-		return f.invalid(d, "Не удалось сохранить мероприятие. Нажмите «Сохранить» ещё раз."), fmt.Errorf("save event: %w", err)
+		return creationResult{state: state, draft: d, status: saveFailed}, fmt.Errorf("save event: %w", err)
 	}
-	f.clear(userID)
-	return eventScreen{text: fmt.Sprintf("Мероприятие «%s» (№%d) создано.", d.event.Title, id)}, nil
+	f.machine.Clear(userID)
+	return creationResult{status: eventCreated, draft: d, eventID: id}, nil
 }
 
-func (f *EventCreationService) reenterDates(ctx context.Context, userID int64, d conversation) (eventScreen, error) {
-	d.token = rand.Text()
-	d.state, d.returnToPreview = eventStart, true
-	if err := f.save(ctx, userID, d); err != nil {
-		return eventScreen{}, err
-	}
-	return f.invalid(d, "Время начала уже прошло. Введите новую дату и время."), nil
-}
-
-func (f *EventCreationService) previewPrompt(d conversation) eventScreen {
-	capacity := "без ограничений"
-	if d.event.Capacity != nil {
-		capacity = strconv.Itoa(int(*d.event.Capacity))
-	}
-	return eventScreen{
-		text:    fmt.Sprintf("Проверьте мероприятие:\n\n%s\n\n%s\n\nМесто: %s\nНачало: %s\nОкончание: %s\nУчастников: %s\nТеги: %s", d.event.Title, d.event.Description, d.event.Location, d.event.StartsAt.In(f.location).Format(eventDateLayout), d.event.EndsAt.In(f.location).Format(eventDateLayout), capacity, strings.Join(d.event.Tags, "; ")),
-		photoID: d.event.PhotoFileID,
-		buttons: []eventButton{f.button(d, "Сохранить", "save")},
-	}
+func (f *EventCreationService) reenterDates(userID int64, d eventDraft) creationResult {
+	state := eventStart
+	d.returnToPreview = true
+	f.machine.Replace(userID, state, d)
+	return creationResult{state: state, draft: d, status: startExpired}
 }
 
 func (f *EventCreationService) inState(userID int64, step fsm.StateID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	state, err := f.machine.CurrentState(context.Background(), userID)
-	if err != nil {
-		reportStorageError(err)
-		return false
-	}
-	return state == step
+	return f.machine.CurrentState(userID) == step
 }
 
-func (f *EventCreationService) snapshot(ctx context.Context, userID int64) (*conversation, error) {
+func (f *EventCreationService) restore(userID int64, state fsm.StateID, saved eventDraft) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
+	f.machine.Replace(userID, state, cloneDraft(saved))
+}
+
+func (f *EventCreationService) staleCallback(userID int64) creationResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
-		return nil, nil
+		return creationResult{status: noActiveDraft}
 	}
-	saved := cloneDraft(d)
-	return &saved, nil
-}
-
-func (f *EventCreationService) restore(ctx context.Context, userID int64, saved conversation) (eventScreen, conversation, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	d := cloneDraft(saved)
-	if err := f.save(ctx, userID, d); err != nil {
-		return eventScreen{}, conversation{}, err
-	}
-	return f.prompt(d), d, nil
-}
-
-func (f *EventCreationService) staleCallback(ctx context.Context, userID int64, callback string) (eventScreen, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	d, exists, err := f.load(ctx, userID)
-	if err != nil {
-		return eventScreen{}, err
-	}
-	if !exists {
-		return eventScreen{text: "Нет активного создания мероприятия."}, nil
-	}
-	parts := strings.Split(callback, ":")
-	if len(parts) != 4 || parts[0] != "admin" || parts[1] != "event" || parts[2] != d.token {
-		return f.invalid(d, "Эта кнопка устарела."), nil
-	}
-	return f.prompt(d), nil
+	return creationResult{state: state, draft: d, status: staleAction}
 }
 
 type Repository interface {

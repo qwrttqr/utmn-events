@@ -60,14 +60,7 @@ func (h *Handler) FirstName(ctx context.Context, b *bot.Bot, update *models.Upda
 	if m == nil || m.From == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.setFirstName(dbCtx, m.From.ID, m.Text)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "registration setFirstName failed", "user_id", m.From.ID, "error", err)
-		view.text = "Не удалось сохранить данные. Отправьте их повторно.\n\n" + view.text
-		view.temporary = true
-	}
+	view := resultPage(h.service.setFirstName(m.From.ID, m.Text))
 	send(ctx, b, m.Chat.ID, view)
 }
 
@@ -76,14 +69,7 @@ func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Updat
 	if m == nil || m.From == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.setLastName(dbCtx, m.From.ID, m.Text)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "registration setLastName failed", "user_id", m.From.ID, "error", err)
-		view.text = "Не удалось сохранить данные. Отправьте их повторно.\n\n" + view.text
-		view.temporary = true
-	}
+	view := resultPage(h.service.setLastName(m.From.ID, m.Text))
 	send(ctx, b, m.Chat.ID, view)
 }
 
@@ -92,14 +78,7 @@ func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update
 	if m == nil || m.From == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.setSurname(dbCtx, m.From.ID, m.Text)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "registration setSurname failed", "user_id", m.From.ID, "error", err)
-		view.text = "Не удалось сохранить данные. Отправьте их повторно.\n\n" + view.text
-		view.temporary = true
-	}
+	view := resultPage(h.service.setSurname(m.From.ID, m.Text))
 	send(ctx, b, m.Chat.ID, view)
 }
 
@@ -115,14 +94,7 @@ func (h *Handler) Start(ctx context.Context, b *bot.Bot, update *models.Update) 
 	if user == nil || message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.begin(dbCtx, user.ID, user.Username)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "registration begin failed", "user_id", user.ID, "error", err)
-		view.text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + view.text
-		view.temporary = true
-	}
+	view := resultPage(h.service.begin(user.ID, user.Username))
 	send(ctx, b, message.Chat.ID, view)
 }
 
@@ -139,12 +111,13 @@ func (h *Handler) Confirm(ctx context.Context, b *bot.Bot, update *models.Update
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.confirm(dbCtx, user.ID, user.Username)
+	result, err := h.service.confirm(dbCtx, user.ID, user.Username)
+	view := resultPage(result)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "registration confirm failed", "user_id", user.ID, "error", err)
-		view.text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + view.text
-		view.temporary = true
+		view.Text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + view.Text
+		view.Root = false
 	}
 	send(ctx, b, message.Chat.ID, view)
 }
@@ -161,14 +134,7 @@ func (h *Handler) SkipSurname(ctx context.Context, b *bot.Bot, update *models.Up
 	if user == nil || message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.skipSurname(dbCtx, user.ID)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "registration skipSurname failed", "user_id", user.ID, "error", err)
-		view.text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + view.text
-		view.temporary = true
-	}
+	view := resultPage(h.service.skipSurname(user.ID))
 	send(ctx, b, message.Chat.ID, view)
 }
 
@@ -184,14 +150,7 @@ func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 	if user == nil || message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.cancelDraft(dbCtx, user.ID)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "registration cancelDraft failed", "user_id", user.ID, "error", err)
-		view.text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + view.text
-		view.temporary = true
-	}
+	view := resultPage(h.service.cancelDraft(user.ID))
 	send(ctx, b, message.Chat.ID, view)
 }
 
@@ -207,21 +166,12 @@ func (h *Handler) Preview(ctx context.Context, b *bot.Bot, update *models.Update
 	if user == nil || message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.preview(dbCtx, user.ID, user.Username)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "registration preview failed", "user_id", user.ID, "error", err)
-		view.text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + view.text
-		view.temporary = true
-	}
+	view := resultPage(h.service.preview(user.ID, user.Username))
 	send(ctx, b, message.Chat.ID, view)
 }
 
-func send(ctx context.Context, b *bot.Bot, chatID int64, view screen) {
-	if err := navigation.Show(ctx, b, chatID, navigation.Page{
-		Key: "registration", Text: view.text, Keyboard: keyboard(view), Root: !view.temporary, NoNavigation: true,
-	}); err != nil {
+func send(ctx context.Context, b *bot.Bot, chatID int64, page navigation.Page) {
+	if err := navigation.Show(ctx, b, chatID, page); err != nil {
 		slog.ErrorContext(ctx, "send registration message failed", "error", err)
 	}
 }

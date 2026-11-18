@@ -8,20 +8,20 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
+	"utmn-events-bot/internal/fsm"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
 type Handler struct {
-	service     *AnnouncementsService
-	beforeBegin func(int64)
+	service *AnnouncementsService
 }
 
-func NewHandler(service *AnnouncementsService, beforeBegin func(int64)) *Handler {
-	return &Handler{service: service, beforeBegin: beforeBegin}
+func NewHandler(service *AnnouncementsService) *Handler {
+	return &Handler{service: service}
 }
 
-func Register(b *bot.Bot, service *AnnouncementsService, guard bot.Middleware, beforeBegin func(int64)) {
-	h := NewHandler(service, beforeBegin)
+func Register(b *bot.Bot, service *AnnouncementsService, guard bot.Middleware) {
+	h := NewHandler(service)
 
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:announcement", bot.MatchTypeExact, h.Begin, guard)
 
@@ -37,20 +37,11 @@ func Register(b *bot.Bot, service *AnnouncementsService, guard bot.Middleware, b
 		return service.enteringText(m.From.ID)
 	}, h.Text, guard)
 
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		return q != nil && strings.HasPrefix(q.Data, "admin:announcement:") && strings.HasSuffix(q.Data, ":edit")
-	}, h.Edit, guard)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:announcement:edit", bot.MatchTypeExact, h.Edit, guard)
 
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		return q != nil && strings.HasPrefix(q.Data, "admin:announcement:") && strings.HasSuffix(q.Data, ":send")
-	}, h.Send, guard)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:announcement:send", bot.MatchTypeExact, h.Send, guard)
 
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		return q != nil && strings.HasPrefix(q.Data, "admin:announcement:") && strings.HasSuffix(q.Data, ":cancel")
-	}, h.Cancel, guard)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:announcement:cancel", bot.MatchTypeExact, h.Cancel, guard)
 
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:announcement:", bot.MatchTypePrefix, h.StaleCallback, guard)
 }
@@ -64,13 +55,7 @@ func (h *Handler) Begin(ctx context.Context, b *bot.Bot, update *models.Update) 
 	if q.Message.Message == nil {
 		return
 	}
-	h.beforeBegin(q.From.ID)
-	view, err := h.service.begin(ctx, q.From.ID)
-	if err != nil {
-		slog.ErrorContext(ctx, "begin announcement failed", "user_id", q.From.ID, "error", err)
-		h.show(ctx, b, q.Message.Message.Chat.ID, screen{text: "Не удалось начать создание объявления. Попробуйте ещё раз."})
-		return
-	}
+	view := resultPage(h.service.begin(q.From.ID))
 	h.show(ctx, b, q.Message.Message.Chat.ID, view)
 }
 
@@ -79,12 +64,7 @@ func (h *Handler) Text(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if m == nil || m.From == nil {
 		return
 	}
-	view, err := h.service.setText(ctx, m.From.ID, m.Text)
-	if err != nil {
-		slog.ErrorContext(ctx, "set announcement text failed", "user_id", m.From.ID, "error", err)
-		h.show(ctx, b, m.Chat.ID, screen{text: "Не удалось сохранить текст объявления. Отправьте текст повторно."})
-		return
-	}
+	view := resultPage(h.service.setText(m.From.ID, m.Text))
 	h.show(ctx, b, m.Chat.ID, view)
 }
 
@@ -97,12 +77,7 @@ func (h *Handler) Edit(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if q.Message.Message == nil {
 		return
 	}
-	view, err := h.service.edit(ctx, q.From.ID, q.Data)
-	if err != nil {
-		slog.ErrorContext(ctx, "edit announcement failed", "user_id", q.From.ID, "error", err)
-		h.show(ctx, b, q.Message.Message.Chat.ID, screen{text: "Не удалось открыть редактирование объявления."})
-		return
-	}
+	view := resultPage(h.service.edit(q.From.ID))
 	h.show(ctx, b, q.Message.Message.Chat.ID, view)
 }
 
@@ -115,18 +90,21 @@ func (h *Handler) Send(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if q.Message.Message == nil {
 		return
 	}
-	view, job, err := h.service.prepareSend(ctx, q.From.ID, q.Data)
+	result, job, err := h.service.prepareSend(q.From.ID)
 	if err != nil {
 		slog.ErrorContext(ctx, "prepare announcement failed", "user_id", q.From.ID, "error", err)
-		h.show(ctx, b, q.Message.Message.Chat.ID, screen{text: "Не удалось начать рассылку объявления."})
+		h.show(ctx, b, q.Message.Message.Chat.ID, announcementPage("Не удалось начать рассылку объявления.", fsm.Idle, false))
 		return
 	}
-	h.show(ctx, b, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, q.Message.Message.Chat.ID, resultPage(result))
 	if job == nil {
 		return
 	}
 	go h.service.send(*job, func(ctx context.Context, userID int64, text string) error {
-		_, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: userID, Text: text})
+		_, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: userID, Text: "Объявление\n\n" + text})
+		return err
+	}, func(ctx context.Context, userID int64, report report) error {
+		_, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: userID, Text: reportText(report)})
 		return err
 	})
 }
@@ -140,12 +118,7 @@ func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 	if q.Message.Message == nil {
 		return
 	}
-	view, err := h.service.cancelDraft(ctx, q.From.ID, q.Data)
-	if err != nil {
-		slog.ErrorContext(ctx, "cancel announcement failed", "user_id", q.From.ID, "error", err)
-		h.show(ctx, b, q.Message.Message.Chat.ID, screen{text: "Не удалось отменить создание объявления."})
-		return
-	}
+	view := resultPage(h.service.cancelDraft(q.From.ID))
 	h.show(ctx, b, q.Message.Message.Chat.ID, view)
 }
 
@@ -158,18 +131,10 @@ func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 	if q.Message.Message == nil {
 		return
 	}
-	h.show(ctx, b, q.Message.Message.Chat.ID, staleScreen())
+	h.show(ctx, b, q.Message.Message.Chat.ID, stalePage())
 }
 
-func (h *Handler) show(ctx context.Context, b *bot.Bot, chatID int64, view screen) {
-	page := navigation.Page{
-		Key:          "admin:announcement:" + view.token,
-		Text:         view.text,
-		Keyboard:     announcementKeyboard(view),
-		Admin:        true,
-		NoNavigation: true,
-		ClearHistory: view.finished,
-	}
+func (h *Handler) show(ctx context.Context, b *bot.Bot, chatID int64, page navigation.Page) {
 	if err := navigation.Show(ctx, b, chatID, page); err != nil {
 		slog.ErrorContext(ctx, "show announcement screen failed", "error", err)
 	}

@@ -12,64 +12,21 @@ import (
 )
 
 type Handler struct {
-	service     *ProfileService
-	beforeBegin func(int64)
+	service *ProfileService
 }
 
-func NewHandler(service *ProfileService, beforeBegin func(int64)) *Handler {
-	return &Handler{service: service, beforeBegin: beforeBegin}
+func NewHandler(service *ProfileService) *Handler {
+	return &Handler{service: service}
 }
-func Register(b *bot.Bot, service *ProfileService, beforeBegin func(int64)) {
-	h := NewHandler(service, beforeBegin)
+func Register(b *bot.Bot, service *ProfileService) {
+	h := NewHandler(service)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile", bot.MatchTypeExact, h.Begin)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		if q == nil {
-			return false
-		}
-		parts := strings.Split(q.Data, ":")
-		return len(parts) == 4 && parts[0] == "user" && parts[1] == "profile" && parts[3] == "first_name"
-	}, h.EditFirstName)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		if q == nil {
-			return false
-		}
-		parts := strings.Split(q.Data, ":")
-		return len(parts) == 4 && parts[0] == "user" && parts[1] == "profile" && parts[3] == "last_name"
-	}, h.EditLastName)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		if q == nil {
-			return false
-		}
-		parts := strings.Split(q.Data, ":")
-		return len(parts) == 4 && parts[0] == "user" && parts[1] == "profile" && parts[3] == "surname"
-	}, h.EditSurname)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		if q == nil {
-			return false
-		}
-		parts := strings.Split(q.Data, ":")
-		return len(parts) == 4 && parts[0] == "user" && parts[1] == "profile" && parts[3] == "clear_surname"
-	}, h.ClearSurname)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		if q == nil {
-			return false
-		}
-		parts := strings.Split(q.Data, ":")
-		return len(parts) == 4 && parts[0] == "user" && parts[1] == "profile" && parts[3] == "save"
-	}, h.Save)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		if q == nil {
-			return false
-		}
-		parts := strings.Split(q.Data, ":")
-		return len(parts) == 4 && parts[0] == "user" && parts[1] == "profile" && parts[3] == "cancel"
-	}, h.Cancel)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:first_name", bot.MatchTypeExact, h.EditFirstName)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:last_name", bot.MatchTypeExact, h.EditLastName)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:surname", bot.MatchTypeExact, h.EditSurname)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:clear_surname", bot.MatchTypeExact, h.ClearSurname)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:save", bot.MatchTypeExact, h.Save)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:cancel", bot.MatchTypeExact, h.Cancel)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return h.matchMessage(profileFirstName, update) }, h.FirstName)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return h.matchMessage(profileLastName, update) }, h.LastName)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return h.matchMessage(profileSurname, update) }, h.Surname)
@@ -85,13 +42,13 @@ func (h *Handler) Begin(ctx context.Context, b *bot.Bot, update *models.Update) 
 	if q.Message.Message == nil {
 		return
 	}
-	h.beforeBegin(q.From.ID)
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.begin(dbCtx, q.From.ID)
+	result, err := h.service.begin(dbCtx, q.From.ID)
+	view := h.page(q.From.ID, result)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "profile begin failed", "user_id", q.From.ID, "error", err)
-		view.text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.text
+		view.Text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.Text
 	}
 	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
 }
@@ -105,13 +62,7 @@ func (h *Handler) EditFirstName(ctx context.Context, b *bot.Bot, update *models.
 	if q.Message.Message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.editFirstName(dbCtx, q.From.ID, q.Data)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "profile editFirstName failed", "user_id", q.From.ID, "error", err)
-		view.text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.text
-	}
+	view := h.page(q.From.ID, h.service.editFirstName(q.From.ID))
 	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -124,13 +75,7 @@ func (h *Handler) EditLastName(ctx context.Context, b *bot.Bot, update *models.U
 	if q.Message.Message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.editLastName(dbCtx, q.From.ID, q.Data)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "profile editLastName failed", "user_id", q.From.ID, "error", err)
-		view.text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.text
-	}
+	view := h.page(q.From.ID, h.service.editLastName(q.From.ID))
 	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -143,13 +88,7 @@ func (h *Handler) EditSurname(ctx context.Context, b *bot.Bot, update *models.Up
 	if q.Message.Message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.editSurname(dbCtx, q.From.ID, q.Data)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "profile editSurname failed", "user_id", q.From.ID, "error", err)
-		view.text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.text
-	}
+	view := h.page(q.From.ID, h.service.editSurname(q.From.ID))
 	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -162,13 +101,7 @@ func (h *Handler) ClearSurname(ctx context.Context, b *bot.Bot, update *models.U
 	if q.Message.Message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.clearSurname(dbCtx, q.From.ID, q.Data)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "profile clearSurname failed", "user_id", q.From.ID, "error", err)
-		view.text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.text
-	}
+	view := h.page(q.From.ID, h.service.clearSurname(q.From.ID))
 	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -182,11 +115,12 @@ func (h *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.confirm(dbCtx, q.From.ID, q.Data)
+	result, err := h.service.confirm(dbCtx, q.From.ID)
+	view := h.page(q.From.ID, result)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "profile confirm failed", "user_id", q.From.ID, "error", err)
-		view.text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.text
+		view.Text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.Text
 	}
 	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
 }
@@ -200,13 +134,7 @@ func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 	if q.Message.Message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.cancelEdit(dbCtx, q.From.ID, q.Data)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "profile cancelEdit failed", "user_id", q.From.ID, "error", err)
-		view.text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.text
-	}
+	view := h.page(q.From.ID, h.service.cancelEdit(q.From.ID))
 	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
@@ -215,13 +143,7 @@ func (h *Handler) FirstName(ctx context.Context, b *bot.Bot, update *models.Upda
 	if m == nil || m.From == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.setFirstName(dbCtx, m.From.ID, m.Text)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "profile setFirstName failed", "user_id", m.From.ID, "error", err)
-		view.text = "Не удалось сохранить данные. Отправьте их повторно.\n\n" + view.text
-	}
+	view := h.page(m.From.ID, h.service.setFirstName(m.From.ID, m.Text))
 	h.show(ctx, b, m.From.ID, m.Chat.ID, view)
 }
 
@@ -230,13 +152,7 @@ func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Updat
 	if m == nil || m.From == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.setLastName(dbCtx, m.From.ID, m.Text)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "profile setLastName failed", "user_id", m.From.ID, "error", err)
-		view.text = "Не удалось сохранить данные. Отправьте их повторно.\n\n" + view.text
-	}
+	view := h.page(m.From.ID, h.service.setLastName(m.From.ID, m.Text))
 	h.show(ctx, b, m.From.ID, m.Chat.ID, view)
 }
 
@@ -245,13 +161,7 @@ func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update
 	if m == nil || m.From == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.setSurname(dbCtx, m.From.ID, m.Text)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "profile setSurname failed", "user_id", m.From.ID, "error", err)
-		view.text = "Не удалось сохранить данные. Отправьте их повторно.\n\n" + view.text
-	}
+	view := h.page(m.From.ID, h.service.setSurname(m.From.ID, m.Text))
 	h.show(ctx, b, m.From.ID, m.Chat.ID, view)
 }
 
@@ -264,7 +174,7 @@ func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 	if q.Message.Message == nil {
 		return
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, staleScreen())
+	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, stalePage())
 }
 func (h *Handler) matchMessage(state fsm.StateID, update *models.Update) bool {
 	m := update.Message
@@ -277,16 +187,22 @@ func (h *Handler) matchMessage(state fsm.StateID, update *models.Update) bool {
 	}
 	return h.service.inState(m.From.ID, state)
 }
-func (h *Handler) show(ctx context.Context, b *bot.Bot, userID, chatID int64, view screen) {
-	page := navigation.Page{Key: "user:profile", Text: view.text, Keyboard: profileKeyboard(view), NoNavigation: view.token != "" && view.state != profileView}
-	page.Restore = func(ctx context.Context) (navigation.Page, error) {
-		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		view, err := h.service.begin(dbCtx, userID)
-		if err != nil {
-			return navigation.Page{}, err
+func (h *Handler) show(ctx context.Context, b *bot.Bot, userID, chatID int64, page navigation.Page) {
+	if page.Key == "" {
+		page = profilePage(page.Text, fsm.Idle)
+	}
+	if !page.Root {
+		page.Restore = func(ctx context.Context) (navigation.Page, error) {
+			dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			result, err := h.service.begin(dbCtx, userID)
+			view := h.page(userID, result)
+			if err != nil {
+				return navigation.Page{}, err
+			}
+			view.Restore = page.Restore
+			return view, nil
 		}
-		return navigation.Page{Key: "user:profile", Text: view.text, Keyboard: profileKeyboard(view), Restore: page.Restore}, nil
 	}
 	if err := navigation.Show(ctx, b, chatID, page); err != nil {
 		slog.ErrorContext(ctx, "show profile failed", "error", err)

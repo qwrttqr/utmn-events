@@ -1,32 +1,26 @@
 package registration
 
-import "github.com/go-telegram/bot/models"
+import (
+	"github.com/go-telegram/bot/models"
 
-func keyboard(view screen) *models.InlineKeyboardMarkup {
-	markup := &models.InlineKeyboardMarkup{}
-	add := func(text, data string) {
-		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{
-			{Text: text, CallbackData: data},
-		})
+	"utmn-events-bot/internal/telegram/navigation"
+)
+
+func registrationPage(text string, buttons ...models.InlineKeyboardButton) navigation.Page {
+	page := navigation.Page{Key: "registration", Text: text, Root: true, NoNavigation: true}
+	if len(buttons) != 0 {
+		page.Keyboard = &models.InlineKeyboardMarkup{}
+		for _, button := range buttons {
+			page.Keyboard.InlineKeyboard = append(page.Keyboard.InlineKeyboard, []models.InlineKeyboardButton{button})
+		}
 	}
-	if view.start {
-		add("Начать регистрацию", "registration:start")
-	}
-	if view.skip {
-		add("Пропустить", "registration:skip")
-	}
-	if view.confirm {
-		add("Подтвердить", "registration:confirm")
-		add("Заполнить заново", "registration:restart")
-	}
-	if view.cancel {
-		add("Отменить регистрацию", "registration:cancel")
-	}
-	if view.menu {
-		add("🏠", "home:menu")
-	}
-	if len(markup.InlineKeyboard) == 0 {
-		return nil
-	}
-	return markup
+	return page
+}
+
+func registrationButton(text, callback string) models.InlineKeyboardButton {
+	return models.InlineKeyboardButton{Text: text, CallbackData: callback}
+}
+
+func cancelButton() models.InlineKeyboardButton {
+	return registrationButton("Отменить регистрацию", "registration:cancel")
 }

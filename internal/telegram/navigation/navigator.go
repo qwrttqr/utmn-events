@@ -15,6 +15,13 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
+type HistoryMode uint8
+
+const (
+	HistoryPush HistoryMode = iota + 1
+	HistoryMatchCurrent
+)
+
 type Page struct {
 	Key          string
 	Text         string
@@ -24,6 +31,7 @@ type Page struct {
 	Root         bool
 	NoNavigation bool
 	ClearHistory bool
+	History      HistoryMode
 	Restore      func(context.Context) (Page, error)
 }
 
@@ -65,8 +73,6 @@ func (n *Navigator) Register(b *bot.Bot) {
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "nav:", bot.MatchTypePrefix, n.handle)
 }
 
-// Show uses the navigator injected by middleware. Standalone handlers can still
-// render a screen without navigation (useful when embedding or testing them).
 func Show(ctx context.Context, b *bot.Bot, chatID int64, page Page) error {
 	r, managed := ctx.Value(contextKey{}).(request)
 	if !managed || chatID <= 0 {
@@ -93,18 +99,7 @@ func Show(ctx context.Context, b *bot.Bot, chatID int64, page Page) error {
 		if len(history) == 0 && n.home != nil {
 			history = append(history, n.home(chatID))
 		}
-		found := false
-		for i := len(history) - 1; i >= 0; i-- {
-			if history[i].Key == page.Key {
-				history = history[:i+1]
-				history[i] = page
-				found = true
-				break
-			}
-		}
-		if !found {
-			history = append(history, page)
-		}
+		history = recordPage(history, page)
 		if len(history) > 10 {
 			history = append(history[:1:1], history[len(history)-9:]...)
 		}
@@ -116,20 +111,47 @@ func Show(ctx context.Context, b *bot.Bot, chatID int64, page Page) error {
 	return nil
 }
 
+func recordPage(history []Page, page Page) []Page {
+	switch page.History {
+	case HistoryPush:
+		return append(history, page)
+	case HistoryMatchCurrent:
+		if last := len(history) - 1; last >= 0 && history[last].Key == page.Key {
+			history[last] = page
+			return history
+		}
+	default:
+		for i := len(history) - 1; i >= 0; i-- {
+			if history[i].Key == page.Key {
+				history[i] = page
+				return history[:i+1]
+			}
+		}
+	}
+	return append(history, page)
+}
+
 func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Update) {
 	q := update.CallbackQuery
+
 	if q == nil || q.Message.Message == nil {
 		return
 	}
+
 	message := q.Message.Message
+
 	if message.Chat.Type != models.ChatTypePrivate || message.Chat.ID != q.From.ID {
 		return
 	}
+
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
 	s := n.sessions[message.Chat.ID]
+
 	parts := strings.Split(q.Data, ":")
 	answer := ""
+
 	if s == nil || len(s.history) == 0 {
 		answer = "История истекла. Открываю главное меню."
 	} else if len(parts) != 3 || parts[1] != s.token {
@@ -137,9 +159,11 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 	} else if s.history[len(s.history)-1].Admin && !slices.Contains(n.adminIDs, q.From.ID) {
 		answer = "Только для администратора."
 	}
+
 	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: q.ID, Text: answer}); err != nil {
 		slog.ErrorContext(ctx, "answer navigation callback failed", "error", err)
 	}
+
 	if (s == nil || len(s.history) == 0) && n.home != nil {
 		page := n.home(q.From.ID)
 		if page.Admin && !slices.Contains(n.adminIDs, q.From.ID) {
@@ -156,10 +180,12 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 		}
 		return
 	}
+
 	if answer != "" {
 		return
 	}
 	history := slices.Clone(s.history)
+
 	switch parts[2] {
 	case "home":
 		history = history[:1]
@@ -171,12 +197,11 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 	default:
 		return
 	}
+
 	page := history[len(history)-1]
+
 	if page.Admin && !slices.Contains(n.adminIDs, q.From.ID) {
 		return
-	}
-	if n.cleanup != nil {
-		n.cleanup(q.From.ID)
 	}
 	if page.Restore != nil {
 		var err error
@@ -186,7 +211,10 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 			return
 		}
 		history[len(history)-1] = page
+	} else if n.cleanup != nil {
+		n.cleanup(q.From.ID)
 	}
+
 	if err := n.display(ctx, b, message.Chat.ID, s, page, history, update); err != nil {
 		slog.ErrorContext(ctx, "navigate failed", "error", err)
 	}
@@ -294,7 +322,6 @@ func render(ctx context.Context, b *bot.Bot, chatID int64, page Page, markup *mo
 
 func erase(ctx context.Context, b *bot.Bot, chatID int64, id int) {
 	if _, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: id}); err != nil {
-		// Keep navigation usable when Telegram no longer permits deleting a message.
 		slog.DebugContext(ctx, "delete previous navigation message failed", "message_id", id, "error", err)
 	}
 }

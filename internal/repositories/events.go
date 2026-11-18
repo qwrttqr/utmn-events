@@ -22,8 +22,6 @@ func NewEventRepository(pool *pgxpool.Pool) *EventRepository {
 	return &EventRepository{pool: pool}
 }
 
-// Browse matches any selected tag, without duplicating events that have several
-// matching tags. UserTelegramID filters to that user's registrations.
 func (r *EventRepository) Browse(ctx context.Context, filter domain.EventFilter, limit, offset int) ([]domain.EventSummary, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT e.id, e.title FROM events e

@@ -38,22 +38,6 @@ func (cache *ShardedInMemoryStore[K, V]) Delete(key K) {
 	delete(shard.entries, key)
 }
 
-func (cache *ShardedInMemoryStore[K, V]) Read(key K, readFn func(value V, exists bool)) {
-	shard := cache.getShard(key)
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	value, exists := shard.entries[key]
-	readFn(value, exists)
-}
-
-func (cache *ShardedInMemoryStore[K, V]) Update(key K, updateFn func(currentValue V, exists bool) V) {
-	shard := cache.getShard(key)
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	currentValue, exists := shard.entries[key]
-	shard.entries[key] = updateFn(currentValue, exists)
-}
-
 func NewCache[K comparable, V any](
 	shardCount uint32,
 	hash func(K) uint32,

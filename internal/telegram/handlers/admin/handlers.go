@@ -10,7 +10,6 @@ import (
 	"utmn-events-bot/internal/telegram/handlers/admin/menu"
 	"utmn-events-bot/internal/telegram/handlers/admin/tags"
 	adminusers "utmn-events-bot/internal/telegram/handlers/admin/users"
-	"utmn-events-bot/internal/telegram/handlers/user/profile"
 	"utmn-events-bot/internal/telegram/middleware"
 )
 
@@ -23,28 +22,16 @@ func Register(
 	usersService *adminusers.UsersService,
 	announcementsService *announcements.AnnouncementsService,
 	eventEditingService *event_editing.EventEditingService,
-	profileService *profile.ProfileService,
-) func(int64) {
+	finish func(int64),
+) {
 	guard := middleware.RequireAdmin(adminIDs)
+	menu.RegisterCommand(b, guard, finish)
 
-	cancel := func(id int64) {
-		profileService.Cancel(id)
-		eventCreationService.Cancel(id)
-		eventEditingService.Cancel(id)
-		tagsService.Cancel(id)
-		managementService.Cancel(id)
-		usersService.Cancel(id)
-		announcementsService.Cancel(id)
-	}
-
-	menu.RegisterCommand(b, guard, cancel)
-
-	event_creation.Register(b, eventCreationService, guard, cancel)
-	tags.Register(b, tagsService, guard, cancel)
+	event_creation.Register(b, eventCreationService, guard)
+	tags.Register(b, tagsService, guard)
 	event_editing.Register(b, eventEditingService, guard)
-	event_management.Register(b, managementService, event_editing.NewHandler(eventEditingService), guard, cancel)
-	adminusers.Register(b, usersService, guard, cancel)
-	announcements.Register(b, announcementsService, guard, cancel)
-	menu.RegisterCallbacks(b, guard, cancel)
-	return cancel
+	event_management.Register(b, managementService, event_editing.NewHandler(eventEditingService), guard)
+	adminusers.Register(b, usersService, guard)
+	announcements.Register(b, announcementsService, guard)
+	menu.RegisterCallbacks(b, guard, finish)
 }

@@ -13,15 +13,14 @@ import (
 )
 
 type Handler struct {
-	service     *TagsService
-	beforeBegin func(int64)
+	service *TagsService
 }
 
-func NewHandler(service *TagsService, beforeBegin func(int64)) *Handler {
-	return &Handler{service: service, beforeBegin: beforeBegin}
+func NewHandler(service *TagsService) *Handler {
+	return &Handler{service: service}
 }
-func Register(b *bot.Bot, service *TagsService, guard bot.Middleware, beforeBegin func(int64)) {
-	h := NewHandler(service, beforeBegin)
+func Register(b *bot.Bot, service *TagsService, guard bot.Middleware) {
+	h := NewHandler(service)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:tags", bot.MatchTypeExact, h.List, guard)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
@@ -103,7 +102,6 @@ func (h *Handler) List(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if q.Message.Message == nil {
 		return
 	}
-	h.beforeBegin(q.From.ID)
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	view, err := h.service.begin(dbCtx, q.From.ID)
 	cancel()
@@ -125,7 +123,7 @@ func (h *Handler) Create(ctx context.Context, b *bot.Bot, update *models.Update)
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.create(dbCtx, q.From.ID, "", q.Data)
+	view, err := h.service.create(dbCtx, q.From.ID, q.Data)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
@@ -145,7 +143,7 @@ func (h *Handler) Assign(ctx context.Context, b *bot.Bot, update *models.Update)
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.assign(dbCtx, q.From.ID, "", q.Data)
+	view, err := h.service.assign(dbCtx, q.From.ID, q.Data)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
@@ -165,7 +163,7 @@ func (h *Handler) Page(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.changePage(dbCtx, q.From.ID, "", q.Data)
+	view, err := h.service.changePage(dbCtx, q.From.ID, q.Data)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
@@ -185,7 +183,7 @@ func (h *Handler) SelectEvent(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.selectEvent(dbCtx, q.From.ID, "", q.Data)
+	view, err := h.service.selectEvent(dbCtx, q.From.ID, q.Data)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
@@ -205,7 +203,7 @@ func (h *Handler) ToggleTag(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.toggleTag(dbCtx, q.From.ID, "", q.Data)
+	view, err := h.service.toggleTag(dbCtx, q.From.ID, q.Data)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
@@ -225,7 +223,7 @@ func (h *Handler) ClearTags(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.clearTags(dbCtx, q.From.ID, "", q.Data)
+	view, err := h.service.clearTags(dbCtx, q.From.ID, q.Data)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
@@ -245,7 +243,7 @@ func (h *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.saveTags(dbCtx, q.From.ID, "", q.Data)
+	view, err := h.service.saveTags(dbCtx, q.From.ID, q.Data)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
@@ -265,7 +263,7 @@ func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	view, err := h.service.staleCallback(dbCtx, q.From.ID, "", q.Data)
+	view, err := h.service.staleCallback(dbCtx, q.From.ID, q.Data)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
@@ -286,13 +284,9 @@ func (h *Handler) Name(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 	h.show(ctx, b, m.From.ID, m.Chat.ID, view)
 }
-func (h *Handler) show(ctx context.Context, b *bot.Bot, userID, chatID int64, view screen) {
-	snapshot, err := h.service.snapshot(ctx, userID)
-	if err != nil {
-		reportStorageError(err)
-		return
-	}
-	if err := navigation.Show(ctx, b, chatID, h.service.page(userID, view, snapshot)); err != nil {
+func (h *Handler) show(ctx context.Context, b *bot.Bot, userID, chatID int64, result tagResult) {
+	state, snapshot := h.service.snapshot(userID)
+	if err := navigation.Show(ctx, b, chatID, h.page(userID, result, state, snapshot)); err != nil {
 		slog.ErrorContext(ctx, "show tags failed", "error", err)
 	}
 }

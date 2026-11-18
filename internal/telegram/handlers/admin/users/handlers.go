@@ -13,25 +13,24 @@ import (
 )
 
 type Handler struct {
-	service     *UsersService
-	beforeBegin func(int64)
+	service *UsersService
 }
 
-func NewHandler(service *UsersService, beforeBegin func(int64)) *Handler {
-	return &Handler{service: service, beforeBegin: beforeBegin}
+func NewHandler(service *UsersService) *Handler {
+	return &Handler{service: service}
 }
-func Register(b *bot.Bot, service *UsersService, guard bot.Middleware, beforeBegin func(int64)) {
-	h := NewHandler(service, beforeBegin)
+func Register(b *bot.Bot, service *UsersService, guard bot.Middleware) {
+	h := NewHandler(service)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:users", bot.MatchTypeExact, h.List, guard)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
-		if q == nil || !strings.HasPrefix(q.Data, "admin:userlist:") {
+		if q == nil {
 			return false
 		}
-		parts := strings.Split(q.Data, ":")
-		return len(parts) == 4 && (strings.HasPrefix(parts[3], "page"))
+		action, ok := strings.CutPrefix(q.Data, paginationPrefix)
+		return ok && strings.HasPrefix(action, "page") && !strings.Contains(action, ":")
 	}, h.Page, guard)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:userlist:", bot.MatchTypePrefix, h.StaleCallback, guard)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, paginationPrefix, bot.MatchTypePrefix, h.StaleCallback, guard)
 }
 func (h *Handler) List(ctx context.Context, b *bot.Bot, update *models.Update) {
 	q := update.CallbackQuery
@@ -44,10 +43,10 @@ func (h *Handler) List(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if q.Message.Message == nil {
 		return
 	}
-	h.beforeBegin(q.From.ID)
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	page, err := h.service.list(dbCtx, q.From.ID)
+	result, err := h.service.list(dbCtx, q.From.ID)
 	cancel()
+	page := h.page(q.From.ID, result)
 	if err != nil {
 		slog.ErrorContext(ctx, "users action failed", "user_id", q.From.ID, "error", err)
 		page = navigation.Page{Key: "admin:users:error", Text: "Не удалось загрузить пользователей.", Admin: true, Keyboard: retryKeyboard(q.Data)}
@@ -69,8 +68,9 @@ func (h *Handler) Page(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	page, err := h.service.page(dbCtx, q.From.ID, q.Data)
+	result, err := h.service.page(dbCtx, q.From.ID, strings.TrimPrefix(q.Data, paginationPrefix))
 	cancel()
+	page := h.page(q.From.ID, result)
 	if err != nil {
 		slog.ErrorContext(ctx, "users action failed", "user_id", q.From.ID, "error", err)
 		page = navigation.Page{Key: "admin:users:error", Text: "Не удалось загрузить пользователей.", Admin: true, Keyboard: retryKeyboard(q.Data)}
@@ -91,14 +91,8 @@ func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 	if q.Message.Message == nil {
 		return
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	page, err := h.service.staleCallback(dbCtx, q.From.ID, q.Data)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "users action failed", "user_id", q.From.ID, "error", err)
-		page = navigation.Page{Key: "admin:users:error", Text: "Не удалось загрузить пользователей.", Admin: true, Keyboard: retryKeyboard(q.Data)}
-	}
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, page); err != nil {
+
+	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, expiredPage()); err != nil {
 		slog.ErrorContext(ctx, "show page failed", "error", err)
 	}
 }

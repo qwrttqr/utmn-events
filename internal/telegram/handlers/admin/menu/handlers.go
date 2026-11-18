@@ -27,7 +27,7 @@ func (h *Handler) ShowAdminMenu(ctx context.Context, b *bot.Bot, update *models.
 		return
 	}
 	h.beforeOpen(m.From.ID)
-	if err := navigation.Show(ctx, b, m.Chat.ID, Page()); err != nil {
+	if err := navigation.Show(ctx, b, m.Chat.ID, GetMainPage()); err != nil {
 		slog.ErrorContext(ctx, "show admin menu failed", "error", err)
 	}
 }
@@ -43,7 +43,7 @@ func (h *Handler) Menu(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if q.Message.Message == nil {
 		return
 	}
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, Page()); err != nil {
+	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, GetMainPage()); err != nil {
 		slog.ErrorContext(ctx, "show admin page failed", "error", err)
 	}
 }
