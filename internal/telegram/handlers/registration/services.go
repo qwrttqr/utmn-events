@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	firstName    fsm.StateID = "registration.first_name"
-	lastName     fsm.StateID = "registration.last_name"
-	surname      fsm.StateID = "registration.surname"
-	confirmation fsm.StateID = "registration.confirmation"
+	firstName                fsm.StateID = "registration.first_name"
+	lastName                 fsm.StateID = "registration.last_name"
+	surname                  fsm.StateID = "registration.surname"
+	registrationConfirmation fsm.StateID = "registration.confirmation"
 )
 
 type draft struct {
@@ -25,7 +25,6 @@ type registrationStatus uint8
 
 const (
 	registrationMissing registrationStatus = iota + 1
-	registrationCancelled
 	registrationCompleted
 	registrationInvalidName
 )
@@ -41,19 +40,19 @@ type UserRepository interface {
 	Create(ctx context.Context, user domain.User) error
 }
 
-type RegistrationService struct {
+type Service struct {
 	users   UserRepository
 	machine *fsm.FSM
 }
 
-func NewService(machine *fsm.FSM, users UserRepository) *RegistrationService {
-	return &RegistrationService{
+func NewService(machine *fsm.FSM, users UserRepository) *Service {
+	return &Service{
 		users:   users,
 		machine: machine,
 	}
 }
 
-func (s *RegistrationService) isRegistered(ctx context.Context, userID int64) (bool, error) {
+func (s *Service) isRegistered(ctx context.Context, userID int64) (bool, error) {
 	registered, err := s.users.IsRegistered(ctx, userID)
 	if err != nil {
 		return false, fmt.Errorf("load registration status: %w", err)
@@ -61,60 +60,69 @@ func (s *RegistrationService) isRegistered(ctx context.Context, userID int64) (b
 	return registered, nil
 }
 
-func (s *RegistrationService) Cancel(userID int64) {
+func (s *Service) Cancel(userID int64) {
 	s.clear(userID)
 }
 
-func (s *RegistrationService) hasDraft(userID int64) bool {
+func (s *Service) hasDraft(userID int64) bool {
 	_, _, exists := fsm.Load[draft](s.machine, userID)
 	return exists
 }
 
-func (s *RegistrationService) inState(userID int64, expected fsm.StateID) bool {
+func (s *Service) inState(userID int64, expected fsm.StateID) bool {
 	return s.machine.CurrentState(userID) == expected
 }
 
-func (s *RegistrationService) begin(userID int64, username string) registrationResult {
+func (s *Service) begin(userID int64, username string) {
 	d := draft{profile: domain.User{TelegramID: userID, Username: username, Role: "user"}}
 	s.machine.Replace(userID, firstName, d)
-	return registrationResult{state: firstName, draft: d}
 }
 
-func (s *RegistrationService) setFirstName(userID int64, text string) registrationResult {
+func (s *Service) setFirstName(userID int64, text string) registrationResult {
 	state, d, exists := fsm.Load[draft](s.machine, userID)
+
 	if !exists {
 		return registrationResult{status: registrationMissing}
 	}
+
 	if state != firstName {
 		return registrationResult{state: state, draft: d}
 	}
+
 	text = strings.TrimSpace(text)
+
 	if !validName(text) {
 		return registrationResult{state: state, draft: d, status: registrationInvalidName}
 	}
+
 	d.profile.FirstName, state = text, lastName
 	s.machine.Replace(userID, state, d)
 	return registrationResult{state: state, draft: d}
 }
 
-func (s *RegistrationService) setLastName(userID int64, text string) registrationResult {
+func (s *Service) setLastName(userID int64, text string) registrationResult {
 	state, d, exists := fsm.Load[draft](s.machine, userID)
+
 	if !exists {
 		return registrationResult{status: registrationMissing}
 	}
+
 	if state != lastName {
 		return registrationResult{state: state, draft: d}
 	}
+
 	text = strings.TrimSpace(text)
+
 	if !validName(text) {
 		return registrationResult{state: state, draft: d, status: registrationInvalidName}
 	}
+
 	d.profile.LastName, state = text, surname
 	s.machine.Replace(userID, state, d)
 	return registrationResult{state: state, draft: d}
 }
 
-func (s *RegistrationService) setSurname(userID int64, text string) registrationResult {
+func (s *Service) setSurname(userID int64, text string) registrationResult {
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}
@@ -126,12 +134,12 @@ func (s *RegistrationService) setSurname(userID int64, text string) registration
 	if !validName(text) {
 		return registrationResult{state: state, draft: d, status: registrationInvalidName}
 	}
-	d.profile.Surname, state = text, confirmation
+	d.profile.Surname, state = text, registrationConfirmation
 	s.machine.Replace(userID, state, d)
 	return registrationResult{state: state, draft: d}
 }
 
-func (s *RegistrationService) skipSurname(userID int64) registrationResult {
+func (s *Service) skipSurname(userID int64) registrationResult {
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}
@@ -139,17 +147,17 @@ func (s *RegistrationService) skipSurname(userID int64) registrationResult {
 	if state != surname {
 		return registrationResult{state: state, draft: d}
 	}
-	d.profile.Surname, state = "", confirmation
+	d.profile.Surname, state = "", registrationConfirmation
 	s.machine.Replace(userID, state, d)
 	return registrationResult{state: state, draft: d}
 }
 
-func (s *RegistrationService) confirm(ctx context.Context, userID int64, username string) (registrationResult, error) {
+func (s *Service) confirm(ctx context.Context, userID int64, username string) (registrationResult, error) {
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}, nil
 	}
-	if state != confirmation {
+	if state != registrationConfirmation {
 		return registrationResult{state: state, draft: d}, nil
 	}
 	d.profile.Username = username
@@ -160,12 +168,7 @@ func (s *RegistrationService) confirm(ctx context.Context, userID int64, usernam
 	return registrationResult{status: registrationCompleted}, nil
 }
 
-func (s *RegistrationService) cancelDraft(userID int64) registrationResult {
-	s.clear(userID)
-	return registrationResult{status: registrationCancelled}
-}
-
-func (s *RegistrationService) preview(userID int64, username string) registrationResult {
+func (s *Service) preview(userID int64, username string) registrationResult {
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		state = firstName
@@ -179,9 +182,9 @@ func validName(value string) bool {
 		!strings.HasPrefix(value, "/") && !strings.ContainsFunc(value, unicode.IsControl)
 }
 
-func (s *RegistrationService) clear(userID int64) {
+func (s *Service) clear(userID int64) {
 	switch s.machine.CurrentState(userID) {
-	case firstName, lastName, surname, confirmation:
+	case firstName, lastName, surname, registrationConfirmation:
 		s.machine.Clear(userID)
 	}
 }

@@ -7,41 +7,63 @@ import (
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
-func resultPage(result registrationResult) navigation.Page {
-	switch result.status {
-	case registrationMissing:
-		return registrationPage("Начните регистрацию.", registrationButton("Начать регистрацию", "registration:start"))
-	case registrationCancelled:
-		return registrationPage("Для доступа к боту необходимо зарегистрироваться.", registrationButton("Начать регистрацию", "registration:start"))
-	case registrationCompleted:
-		return registrationPage("Регистрация завершена!", registrationButton("🏠", "home:menu"))
-	case registrationInvalidName:
-		page := prompt(result.state, result.draft)
-		page.Text = "Введите от 1 до 100 символов без команд и переносов строк.\n\n" + page.Text
-		return page
-	}
-
-	return prompt(result.state, result.draft)
+func missingRegistrationPage() navigation.Page {
+	return registrationPage("Начните регистрацию.", registrationButton("Начать регистрацию", "registration:start"))
 }
 
-func prompt(state fsm.StateID, d draft) navigation.Page {
+func cancelledRegistrationPage() navigation.Page {
+	return registrationPage("Для доступа к боту необходимо зарегистрироваться.", registrationButton("Начать регистрацию", "registration:start"))
+}
+
+func saveErrorPage(d draft) navigation.Page {
+	page := confirmationPage(d)
+	page.Text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + page.Text
+	page.Root = false
+	return page
+}
+
+func invalidNamePage(state fsm.StateID, d draft) navigation.Page {
+	page := promptPage(state, d)
+	page.Text = "Введите от 1 до 100 символов без команд и переносов строк.\n\n" + page.Text
+	return page
+}
+
+func promptPage(state fsm.StateID, d draft) navigation.Page {
 	switch state {
 	case firstName:
-		return registrationPage("Для доступа к боту необходимо зарегистрироваться.\nВведите ваше имя.", cancelButton())
+		return firstNamePage()
 	case lastName:
-		return registrationPage("Введите вашу фамилию.", cancelButton())
+		return lastNamePage()
 	case surname:
-		return registrationPage("Введите ваше отчество или нажмите «Пропустить».", registrationButton("Пропустить", "registration:skip"), cancelButton())
+		return surnamePage()
+	case registrationConfirmation:
+		return confirmationPage(d)
 	default:
-		name := d.profile.Surname
-		if name == "" {
-			name = "не указано"
-		}
-		return registrationPage(
-			fmt.Sprintf("Проверьте данные:\nИмя: %s\nФамилия: %s\nОтчество: %s", d.profile.FirstName, d.profile.LastName, name),
-			registrationButton("Подтвердить", "registration:confirm"),
-			registrationButton("Заполнить заново", "registration:restart"),
-			cancelButton(),
-		)
+		return missingRegistrationPage()
 	}
+}
+
+func firstNamePage() navigation.Page {
+	return registrationPage("Для доступа к боту необходимо зарегистрироваться.\nВведите ваше имя.", cancelButton())
+}
+
+func lastNamePage() navigation.Page {
+	return registrationPage("Введите вашу фамилию.", cancelButton())
+}
+
+func surnamePage() navigation.Page {
+	return registrationPage("Введите ваше отчество или нажмите «Пропустить».", registrationButton("Пропустить", "registration:skip"), cancelButton())
+}
+
+func confirmationPage(d draft) navigation.Page {
+	name := d.profile.Surname
+	if name == "" {
+		name = "не указано"
+	}
+	return registrationPage(
+		fmt.Sprintf("Проверьте данные:\nИмя: %s\nФамилия: %s\nОтчество: %s", d.profile.FirstName, d.profile.LastName, name),
+		registrationButton("Подтвердить", "registration:confirm"),
+		registrationButton("Заполнить заново", "registration:restart"),
+		cancelButton(),
+	)
 }

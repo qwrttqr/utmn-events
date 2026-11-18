@@ -2,21 +2,22 @@ package registration
 
 import (
 	"context"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	"log/slog"
 	"strings"
 	"time"
 	"utmn-events-bot/internal/fsm"
 	"utmn-events-bot/internal/telegram/navigation"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 type Handler struct {
 	navigator *navigation.Navigator
-	service   *RegistrationService
+	service   *Service
 }
 
-func NewHandler(navigator *navigation.Navigator, service *RegistrationService) *Handler {
+func NewHandler(navigator *navigation.Navigator, service *Service) *Handler {
 	return &Handler{navigator: navigator, service: service}
 }
 func (h *Handler) Register(b *bot.Bot) {
@@ -37,7 +38,7 @@ func (h *Handler) Register(b *bot.Bot) {
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return h.matchMessage(firstName, update) }, h.FirstName)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return h.matchMessage(lastName, update) }, h.LastName)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return h.matchMessage(surname, update) }, h.Surname)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return h.matchMessage(confirmation, update) }, h.Preview)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return h.matchMessage(registrationConfirmation, update) }, h.Preview)
 }
 
 func (h *Handler) matchMessage(state fsm.StateID, update *models.Update) bool {
@@ -64,8 +65,7 @@ func (h *Handler) FirstName(ctx context.Context, b *bot.Bot, update *models.Upda
 	if m == nil || m.From == nil {
 		return
 	}
-	view := resultPage(h.service.setFirstName(m.From.ID, m.Text))
-	h.send(ctx, b, update, m.Chat.ID, view)
+	h.showPrompt(ctx, b, update, m.Chat.ID, h.service.setFirstName(m.From.ID, m.Text))
 }
 
 func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -73,8 +73,7 @@ func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Updat
 	if m == nil || m.From == nil {
 		return
 	}
-	view := resultPage(h.service.setLastName(m.From.ID, m.Text))
-	h.send(ctx, b, update, m.Chat.ID, view)
+	h.showPrompt(ctx, b, update, m.Chat.ID, h.service.setLastName(m.From.ID, m.Text))
 }
 
 func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -82,8 +81,7 @@ func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update
 	if m == nil || m.From == nil {
 		return
 	}
-	view := resultPage(h.service.setSurname(m.From.ID, m.Text))
-	h.send(ctx, b, update, m.Chat.ID, view)
+	h.showPrompt(ctx, b, update, m.Chat.ID, h.service.setSurname(m.From.ID, m.Text))
 }
 
 func (h *Handler) Start(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -98,8 +96,8 @@ func (h *Handler) Start(ctx context.Context, b *bot.Bot, update *models.Update) 
 	if user == nil || message == nil {
 		return
 	}
-	view := resultPage(h.service.begin(user.ID, user.Username))
-	h.send(ctx, b, update, message.Chat.ID, view)
+	h.service.begin(user.ID, user.Username)
+	h.send(ctx, b, update, message.Chat.ID, firstNamePage())
 }
 
 func (h *Handler) Confirm(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -116,14 +114,17 @@ func (h *Handler) Confirm(ctx context.Context, b *bot.Bot, update *models.Update
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	result, err := h.service.confirm(dbCtx, user.ID, user.Username)
-	view := resultPage(result)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "registration confirm failed", "user_id", user.ID, "error", err)
-		view.Text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + view.Text
-		view.Root = false
+		h.send(ctx, b, update, message.Chat.ID, saveErrorPage(result.draft))
+		return
 	}
-	h.send(ctx, b, update, message.Chat.ID, view)
+	if result.status == registrationCompleted {
+		h.showHome(ctx, b, update, message.Chat.ID)
+		return
+	}
+	h.showPrompt(ctx, b, update, message.Chat.ID, result)
 }
 
 func (h *Handler) SkipSurname(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -138,8 +139,7 @@ func (h *Handler) SkipSurname(ctx context.Context, b *bot.Bot, update *models.Up
 	if user == nil || message == nil {
 		return
 	}
-	view := resultPage(h.service.skipSurname(user.ID))
-	h.send(ctx, b, update, message.Chat.ID, view)
+	h.showPrompt(ctx, b, update, message.Chat.ID, h.service.skipSurname(user.ID))
 }
 
 func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -154,8 +154,8 @@ func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 	if user == nil || message == nil {
 		return
 	}
-	view := resultPage(h.service.cancelDraft(user.ID))
-	h.send(ctx, b, update, message.Chat.ID, view)
+	h.service.Cancel(user.ID)
+	h.send(ctx, b, update, message.Chat.ID, cancelledRegistrationPage())
 }
 
 func (h *Handler) Preview(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -170,8 +170,26 @@ func (h *Handler) Preview(ctx context.Context, b *bot.Bot, update *models.Update
 	if user == nil || message == nil {
 		return
 	}
-	view := resultPage(h.service.preview(user.ID, user.Username))
-	h.send(ctx, b, update, message.Chat.ID, view)
+	result := h.service.preview(user.ID, user.Username)
+	h.send(ctx, b, update, message.Chat.ID, promptPage(result.state, result.draft))
+}
+
+func (h *Handler) showPrompt(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, result registrationResult) {
+	if result.status == registrationMissing {
+		h.send(ctx, b, update, chatID, missingRegistrationPage())
+		return
+	}
+	if result.status == registrationInvalidName {
+		h.send(ctx, b, update, chatID, invalidNamePage(result.state, result.draft))
+		return
+	}
+	h.send(ctx, b, update, chatID, promptPage(result.state, result.draft))
+}
+
+func (h *Handler) showHome(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	if err := h.navigator.ShowHome(ctx, b, update, chatID); err != nil {
+		slog.ErrorContext(ctx, "open home after registration failed", "error", err)
+	}
 }
 
 func (h *Handler) send(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, page navigation.Page) {

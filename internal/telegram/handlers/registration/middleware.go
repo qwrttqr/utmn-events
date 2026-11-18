@@ -48,7 +48,7 @@ func (h *Handler) RequireRegistered(next bot.HandlerFunc) bot.HandlerFunc {
 			h.service.Cancel(user.ID)
 			if q := update.CallbackQuery; q != nil && strings.HasPrefix(q.Data, "registration:") {
 				answer(ctx, b, q.ID, "")
-				h.send(ctx, b, update, message.Chat.ID, registrationPage("Вы уже зарегистрированы.", registrationButton("🏠", "home:menu")))
+				h.showHome(ctx, b, update, message.Chat.ID)
 				return
 			}
 			next(ctx, b, update)

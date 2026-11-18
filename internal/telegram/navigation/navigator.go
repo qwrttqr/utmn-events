@@ -72,6 +72,13 @@ func (n *Navigator) session(chatID int64) *session {
 	return s
 }
 
+func (n *Navigator) ShowHome(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) error {
+	if n.home == nil {
+		return errors.New("home page is not configured")
+	}
+	return n.Show(ctx, b, update, chatID, n.home(chatID))
+}
+
 func (n *Navigator) Show(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, page Page) error {
 	if chatID <= 0 {
 		_, err := render(ctx, b, chatID, page, page.Keyboard)
