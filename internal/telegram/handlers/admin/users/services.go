@@ -30,17 +30,12 @@ func NewService(machine *fsm.FSM, repo Repository, adminIDs []int64) *UsersServi
 }
 
 func (f *UsersService) page(ctx context.Context, userID int64, action string) (listResult, error) {
-
 	state, pageNumber, exists := fsm.Load[int](f.machine, userID)
 	if !exists || state != usersList {
 		return listResult{expired: true}, nil
 	}
 	pageNumber, _ = pagination.Move(pageNumber, action)
 	return f.loadPage(ctx, userID, pageNumber)
-}
-
-func (f *UsersService) list(ctx context.Context, userID int64) (listResult, error) {
-	return f.loadPage(ctx, userID, 0)
 }
 
 func (f *UsersService) loadPage(ctx context.Context, userID int64, pageNumber int) (listResult, error) {
@@ -56,10 +51,6 @@ func (f *UsersService) loadPage(ctx context.Context, userID int64, pageNumber in
 
 	f.machine.Replace(userID, usersList, pageNumber)
 	return listResult{users: users, pageNumber: pageNumber, more: more}, nil
-}
-
-func (f *UsersService) restore(ctx context.Context, userID int64, pageNumber int) (listResult, error) {
-	return f.loadPage(ctx, userID, pageNumber)
 }
 
 const usersList fsm.StateID = "admin.users.list"

@@ -45,7 +45,7 @@ func (h *Handler) List(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	result, err := h.service.list(dbCtx, q.From.ID)
+	result, err := h.service.loadPage(dbCtx, q.From.ID, 0)
 	cancel()
 	page := h.page(q.From.ID, result)
 	if err != nil {
