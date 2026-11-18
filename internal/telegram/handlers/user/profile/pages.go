@@ -14,7 +14,7 @@ func (h *Handler) page(userID int64, result profileResult) navigation.Page {
 	case profileStale:
 		return stalePage()
 	case profileCancelled:
-		return usermenu.MenuPage(userID, h.service.adminIDs)
+		return usermenu.GetMainPage(userID, h.service.adminIDs)
 	case profileInvalidName:
 		message = "Введите от 1 до 100 символов без команд и переносов строк."
 	case profileUpdated:

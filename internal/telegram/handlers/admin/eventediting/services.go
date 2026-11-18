@@ -1,4 +1,4 @@
-package event_editing
+package eventediting
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	_ "time/tzdata"
 	"unicode/utf8"
@@ -69,7 +68,6 @@ type editingResult struct {
 }
 
 type EventEditingService struct {
-	mu       sync.Mutex
 	machine  *fsm.FSM
 	repo     Repository
 	location *time.Location
@@ -105,8 +103,6 @@ func (f *EventEditingService) completeStep(userID int64, state fsm.StateID, d ev
 }
 
 func (f *EventEditingService) cancelForm(userID int64) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	_, _, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -117,8 +113,6 @@ func (f *EventEditingService) cancelForm(userID int64) editingResult {
 }
 
 func (f *EventEditingService) setTitle(userID int64, text string) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -139,8 +133,6 @@ func (f *EventEditingService) setTitle(userID int64, text string) editingResult 
 }
 
 func (f *EventEditingService) setDescription(userID int64, text string) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -161,8 +153,6 @@ func (f *EventEditingService) setDescription(userID int64, text string) editingR
 }
 
 func (f *EventEditingService) skipDescription(userID int64) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -176,8 +166,6 @@ func (f *EventEditingService) skipDescription(userID int64) editingResult {
 }
 
 func (f *EventEditingService) setPhoto(userID int64, photo string) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -194,8 +182,6 @@ func (f *EventEditingService) setPhoto(userID int64, photo string) editingResult
 }
 
 func (f *EventEditingService) skipPhoto(userID int64) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -209,8 +195,6 @@ func (f *EventEditingService) skipPhoto(userID int64) editingResult {
 }
 
 func (f *EventEditingService) setLocation(userID int64, text string) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -231,8 +215,6 @@ func (f *EventEditingService) setLocation(userID int64, text string) editingResu
 }
 
 func (f *EventEditingService) setStart(userID int64, text string) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -257,8 +239,6 @@ func (f *EventEditingService) setStart(userID int64, text string) editingResult 
 }
 
 func (f *EventEditingService) setEnd(userID int64, text string) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -283,8 +263,6 @@ func (f *EventEditingService) setEnd(userID int64, text string) editingResult {
 }
 
 func (f *EventEditingService) setCapacity(userID int64, text string) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -307,8 +285,6 @@ func (f *EventEditingService) setCapacity(userID int64, text string) editingResu
 }
 
 func (f *EventEditingService) unlimitedCapacity(userID int64) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -322,8 +298,6 @@ func (f *EventEditingService) unlimitedCapacity(userID int64) editingResult {
 }
 
 func (f *EventEditingService) setTags(userID int64, text string) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -360,8 +334,6 @@ func (f *EventEditingService) setTags(userID int64, text string) editingResult {
 }
 
 func (f *EventEditingService) skipTags(userID int64) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
@@ -375,8 +347,6 @@ func (f *EventEditingService) skipTags(userID int64) editingResult {
 }
 
 func (f *EventEditingService) confirmEvent(ctx context.Context, userID int64) (editingResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}, nil
@@ -426,27 +396,19 @@ func (f *EventEditingService) beginEdit(userID int64, event domain.Event, field 
 		return editingResult{}, errors.New("event service is not configured")
 	}
 	d := cloneDraft(eventDraft{event: event, updateField: field})
-	f.mu.Lock()
 	f.machine.Replace(userID, step, d)
-	f.mu.Unlock()
 	return editingResult{state: step, draft: d, status: stepStarted}, nil
 }
 
 func (f *EventEditingService) inState(userID int64, step fsm.StateID) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	return f.machine.CurrentState(userID) == step
 }
 
 func (f *EventEditingService) restore(userID int64, state fsm.StateID, saved eventDraft) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.machine.Replace(userID, state, cloneDraft(saved))
 }
 
 func (f *EventEditingService) staleCallback(userID int64) editingResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}

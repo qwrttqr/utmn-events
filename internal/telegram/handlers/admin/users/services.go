@@ -3,7 +3,6 @@ package users
 import (
 	"context"
 	"slices"
-	"sync"
 
 	"utmn-events-bot/internal/domain"
 	"utmn-events-bot/internal/fsm"
@@ -21,7 +20,6 @@ type listResult struct {
 }
 
 type UsersService struct {
-	mu       sync.Mutex
 	machine  *fsm.FSM
 	repo     Repository
 	adminIDs []int64
@@ -32,8 +30,6 @@ func NewService(machine *fsm.FSM, repo Repository, adminIDs []int64) *UsersServi
 }
 
 func (f *UsersService) page(ctx context.Context, userID int64, action string) (listResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 
 	state, pageNumber, exists := fsm.Load[int](f.machine, userID)
 	if !exists || state != usersList {
@@ -44,8 +40,6 @@ func (f *UsersService) page(ctx context.Context, userID int64, action string) (l
 }
 
 func (f *UsersService) list(ctx context.Context, userID int64) (listResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	return f.loadPage(ctx, userID, 0)
 }
 
@@ -65,8 +59,6 @@ func (f *UsersService) loadPage(ctx context.Context, userID int64, pageNumber in
 }
 
 func (f *UsersService) restore(ctx context.Context, userID int64, pageNumber int) (listResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	return f.loadPage(ctx, userID, pageNumber)
 }
 

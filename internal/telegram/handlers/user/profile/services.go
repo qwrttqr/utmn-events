@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -58,7 +57,6 @@ type profileResult struct {
 }
 
 type ProfileService struct {
-	mu       sync.Mutex
 	repo     Repository
 	machine  *fsm.FSM
 	adminIDs []int64
@@ -68,13 +66,9 @@ func NewService(machine *fsm.FSM, repo Repository, adminIDs []int64) *ProfileSer
 	return &ProfileService{repo: repo, machine: machine, adminIDs: slices.Clone(adminIDs)}
 }
 func (s *ProfileService) inState(userID int64, expected fsm.StateID) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.machine.CurrentState(userID) == expected
 }
 func (s *ProfileService) begin(ctx context.Context, userID int64) (profileResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	user, err := s.repo.GetByTelegramID(ctx, userID)
 	if err != nil {
 		return profileResult{}, err
@@ -85,8 +79,6 @@ func (s *ProfileService) begin(ctx context.Context, userID int64) (profileResult
 }
 
 func (s *ProfileService) editFirstName(userID int64) profileResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[session](s.machine, userID)
 	if !exists || state != profileView {
 		return profileResult{status: profileStale}
@@ -96,8 +88,6 @@ func (s *ProfileService) editFirstName(userID int64) profileResult {
 	return profileResult{state: state, session: d}
 }
 func (s *ProfileService) setFirstName(userID int64, text string) profileResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[session](s.machine, userID)
 	if !exists || state != profileFirstName {
 		return profileResult{status: profileStale}
@@ -112,8 +102,6 @@ func (s *ProfileService) setFirstName(userID int64, text string) profileResult {
 }
 
 func (s *ProfileService) editLastName(userID int64) profileResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[session](s.machine, userID)
 	if !exists || state != profileView {
 		return profileResult{status: profileStale}
@@ -123,8 +111,6 @@ func (s *ProfileService) editLastName(userID int64) profileResult {
 	return profileResult{state: state, session: d}
 }
 func (s *ProfileService) setLastName(userID int64, text string) profileResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[session](s.machine, userID)
 	if !exists || state != profileLastName {
 		return profileResult{status: profileStale}
@@ -139,8 +125,6 @@ func (s *ProfileService) setLastName(userID int64, text string) profileResult {
 }
 
 func (s *ProfileService) editSurname(userID int64) profileResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[session](s.machine, userID)
 	if !exists || state != profileView {
 		return profileResult{status: profileStale}
@@ -150,8 +134,6 @@ func (s *ProfileService) editSurname(userID int64) profileResult {
 	return profileResult{state: state, session: d}
 }
 func (s *ProfileService) setSurname(userID int64, text string) profileResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[session](s.machine, userID)
 	if !exists || state != profileSurname {
 		return profileResult{status: profileStale}
@@ -166,8 +148,6 @@ func (s *ProfileService) setSurname(userID int64, text string) profileResult {
 }
 
 func (s *ProfileService) clearSurname(userID int64) profileResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[session](s.machine, userID)
 	if !exists || state != profileSurname {
 		return profileResult{status: profileStale}
@@ -177,8 +157,6 @@ func (s *ProfileService) clearSurname(userID int64) profileResult {
 	return profileResult{state: state, session: d}
 }
 func (s *ProfileService) confirm(ctx context.Context, userID int64) (profileResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[session](s.machine, userID)
 	if !exists || state != profilePreview {
 		return profileResult{status: profileStale}, nil
@@ -207,8 +185,6 @@ func (s *ProfileService) confirm(ctx context.Context, userID int64) (profileResu
 }
 
 func (s *ProfileService) cancelEdit(userID int64) profileResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, _, exists := fsm.Load[session](s.machine, userID)
 	if !exists || state == profileView {
 		return profileResult{status: profileStale}

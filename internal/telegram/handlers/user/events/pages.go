@@ -22,7 +22,7 @@ func (h *Handler) page(userID int64, result eventsResult) navigation.Page {
 	case eventsExpired:
 		return expiredPage()
 	case enrollmentCancelled:
-		return usermenu.MenuPage(userID, h.service.adminIDs)
+		return usermenu.GetMainPage(userID, h.service.adminIDs)
 	case tagsRequired:
 		message = "Выберите хотя бы один тег."
 	case enrollmentSaved:

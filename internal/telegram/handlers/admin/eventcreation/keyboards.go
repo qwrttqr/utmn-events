@@ -1,4 +1,4 @@
-package event_creation
+package eventcreation
 
 import (
 	"github.com/go-telegram/bot/models"

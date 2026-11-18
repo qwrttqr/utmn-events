@@ -26,7 +26,7 @@ func (h *Handler) RequireRegistered(next bot.HandlerFunc) bot.HandlerFunc {
 			if q := update.CallbackQuery; q != nil {
 				answer(ctx, b, q.ID, "Откройте личный чат с ботом и отправьте /start.")
 			} else if message != nil {
-				send(ctx, b, message.Chat.ID, registrationPage("Откройте личный чат с ботом и отправьте /start."))
+				h.send(ctx, b, update, message.Chat.ID, registrationPage("Откройте личный чат с ботом и отправьте /start."))
 			}
 			return
 		}
@@ -41,14 +41,14 @@ func (h *Handler) RequireRegistered(next bot.HandlerFunc) bot.HandlerFunc {
 			}
 			page := registrationPage("Не удалось проверить регистрацию. Попробуйте ещё раз.")
 			page.Root = false
-			send(ctx, b, message.Chat.ID, page)
+			h.send(ctx, b, update, message.Chat.ID, page)
 			return
 		}
 		if registered {
 			h.service.Cancel(user.ID)
 			if q := update.CallbackQuery; q != nil && strings.HasPrefix(q.Data, "registration:") {
 				answer(ctx, b, q.ID, "")
-				send(ctx, b, message.Chat.ID, registrationPage("Вы уже зарегистрированы.", registrationButton("🏠", "home:menu")))
+				h.send(ctx, b, update, message.Chat.ID, registrationPage("Вы уже зарегистрированы.", registrationButton("🏠", "home:menu")))
 				return
 			}
 			next(ctx, b, update)

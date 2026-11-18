@@ -13,14 +13,15 @@ import (
 )
 
 type Handler struct {
-	service *UsersService
+	navigator *navigation.Navigator
+	service   *UsersService
 }
 
-func NewHandler(service *UsersService) *Handler {
-	return &Handler{service: service}
+func NewHandler(navigator *navigation.Navigator, service *UsersService) *Handler {
+	return &Handler{navigator: navigator, service: service}
 }
-func Register(b *bot.Bot, service *UsersService, guard bot.Middleware) {
-	h := NewHandler(service)
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *UsersService, guard bot.Middleware) {
+	h := NewHandler(navigator, service)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:users", bot.MatchTypeExact, h.List, guard)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
@@ -51,7 +52,7 @@ func (h *Handler) List(ctx context.Context, b *bot.Bot, update *models.Update) {
 		slog.ErrorContext(ctx, "users action failed", "user_id", q.From.ID, "error", err)
 		page = navigation.Page{Key: "admin:users:error", Text: "Не удалось загрузить пользователей.", Admin: true, Keyboard: retryKeyboard(q.Data)}
 	}
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, page); err != nil {
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, page); err != nil {
 		slog.ErrorContext(ctx, "show page failed", "error", err)
 	}
 }
@@ -75,7 +76,7 @@ func (h *Handler) Page(ctx context.Context, b *bot.Bot, update *models.Update) {
 		slog.ErrorContext(ctx, "users action failed", "user_id", q.From.ID, "error", err)
 		page = navigation.Page{Key: "admin:users:error", Text: "Не удалось загрузить пользователей.", Admin: true, Keyboard: retryKeyboard(q.Data)}
 	}
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, page); err != nil {
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, page); err != nil {
 		slog.ErrorContext(ctx, "show page failed", "error", err)
 	}
 }
@@ -92,7 +93,7 @@ func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 		return
 	}
 
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, expiredPage()); err != nil {
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, expiredPage()); err != nil {
 		slog.ErrorContext(ctx, "show page failed", "error", err)
 	}
 }

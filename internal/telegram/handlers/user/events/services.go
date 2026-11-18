@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"utmn-events-bot/internal/domain"
@@ -67,7 +66,6 @@ type eventsResult struct {
 }
 
 type EventsService struct {
-	mu            sync.Mutex
 	machine       *fsm.FSM
 	repo          Repository
 	tags          TagRepository
@@ -86,8 +84,6 @@ func NewService(machine *fsm.FSM, repo Repository, tags TagRepository, registrat
 }
 
 func (f *EventsService) Cancel(id int64) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	switch f.machine.CurrentState(id) {
 	case all, mine, chooseTags, results, card, cancelEnrollment:
 		f.machine.Clear(id)
@@ -145,8 +141,6 @@ func (f *EventsService) process(ctx context.Context, userID int64, callback stri
 }
 
 func (f *EventsService) page(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 	s = cloneSession(s)
 
@@ -167,8 +161,6 @@ func (f *EventsService) page(ctx context.Context, userID int64, callback string)
 }
 
 func (f *EventsService) open(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 	s = cloneSession(s)
 
@@ -189,8 +181,6 @@ func (f *EventsService) open(ctx context.Context, userID int64, callback string)
 }
 
 func (f *EventsService) toggleTag(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 	s = cloneSession(s)
 
@@ -221,8 +211,6 @@ func (f *EventsService) toggleTag(ctx context.Context, userID int64, callback st
 }
 
 func (f *EventsService) clearTags(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 	s = cloneSession(s)
 
@@ -242,8 +230,6 @@ func (f *EventsService) clearTags(ctx context.Context, userID int64, callback st
 }
 
 func (f *EventsService) search(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 	s = cloneSession(s)
 	var notice eventsStatus
@@ -269,8 +255,6 @@ func (f *EventsService) search(ctx context.Context, userID int64, callback strin
 }
 
 func (f *EventsService) enroll(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 	s = cloneSession(s)
 	var notice eventsStatus
@@ -302,8 +286,6 @@ func (f *EventsService) enroll(ctx context.Context, userID int64, callback strin
 }
 
 func (f *EventsService) cancelEnrollment(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 	s = cloneSession(s)
 
@@ -323,8 +305,6 @@ func (f *EventsService) cancelEnrollment(ctx context.Context, userID int64, call
 }
 
 func (f *EventsService) keepEnrollment(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 	s = cloneSession(s)
 
@@ -344,8 +324,6 @@ func (f *EventsService) keepEnrollment(ctx context.Context, userID int64, callba
 }
 
 func (f *EventsService) confirmCancellation(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
@@ -361,8 +339,6 @@ func (f *EventsService) confirmCancellation(ctx context.Context, userID int64, c
 }
 
 func (f *EventsService) browse(ctx context.Context, userID int64) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 
 	state, s := all, session{selected: make(map[int64]string)}
 
@@ -375,8 +351,6 @@ func (f *EventsService) browse(ctx context.Context, userID int64) (eventsResult,
 }
 
 func (f *EventsService) myRegistrations(ctx context.Context, userID int64) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 
 	state, s := mine, session{selected: make(map[int64]string)}
 
@@ -389,8 +363,6 @@ func (f *EventsService) myRegistrations(ctx context.Context, userID int64) (even
 }
 
 func (f *EventsService) chooseTags(ctx context.Context, userID int64) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 
 	state, s := chooseTags, session{selected: make(map[int64]string)}
 
@@ -454,8 +426,6 @@ func (f *EventsService) loadPage(ctx context.Context, userID int64, state fsm.St
 }
 
 func (f *EventsService) restore(ctx context.Context, userID int64, state fsm.StateID, saved session) (eventsResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	s := cloneSession(saved)
 	result, err := f.loadPage(ctx, userID, state, &s)
 	if err != nil {

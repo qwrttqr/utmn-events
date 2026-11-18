@@ -12,14 +12,15 @@ import (
 )
 
 type Handler struct {
-	service *ProfileService
+	navigator *navigation.Navigator
+	service   *ProfileService
 }
 
-func NewHandler(service *ProfileService) *Handler {
-	return &Handler{service: service}
+func NewHandler(navigator *navigation.Navigator, service *ProfileService) *Handler {
+	return &Handler{navigator: navigator, service: service}
 }
-func Register(b *bot.Bot, service *ProfileService) {
-	h := NewHandler(service)
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *ProfileService) {
+	h := NewHandler(navigator, service)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile", bot.MatchTypeExact, h.Begin)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:first_name", bot.MatchTypeExact, h.EditFirstName)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:last_name", bot.MatchTypeExact, h.EditLastName)
@@ -50,7 +51,7 @@ func (h *Handler) Begin(ctx context.Context, b *bot.Bot, update *models.Update) 
 		slog.ErrorContext(ctx, "profile begin failed", "user_id", q.From.ID, "error", err)
 		view.Text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.Text
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) EditFirstName(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -63,7 +64,7 @@ func (h *Handler) EditFirstName(ctx context.Context, b *bot.Bot, update *models.
 		return
 	}
 	view := h.page(q.From.ID, h.service.editFirstName(q.From.ID))
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) EditLastName(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -76,7 +77,7 @@ func (h *Handler) EditLastName(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 	view := h.page(q.From.ID, h.service.editLastName(q.From.ID))
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) EditSurname(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -89,7 +90,7 @@ func (h *Handler) EditSurname(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 	view := h.page(q.From.ID, h.service.editSurname(q.From.ID))
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) ClearSurname(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -102,7 +103,7 @@ func (h *Handler) ClearSurname(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 	view := h.page(q.From.ID, h.service.clearSurname(q.From.ID))
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -122,7 +123,7 @@ func (h *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
 		slog.ErrorContext(ctx, "profile confirm failed", "user_id", q.From.ID, "error", err)
 		view.Text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.Text
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -135,7 +136,7 @@ func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 		return
 	}
 	view := h.page(q.From.ID, h.service.cancelEdit(q.From.ID))
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) FirstName(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -144,7 +145,7 @@ func (h *Handler) FirstName(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	view := h.page(m.From.ID, h.service.setFirstName(m.From.ID, m.Text))
-	h.show(ctx, b, m.From.ID, m.Chat.ID, view)
+	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
 }
 
 func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -153,7 +154,7 @@ func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 	view := h.page(m.From.ID, h.service.setLastName(m.From.ID, m.Text))
-	h.show(ctx, b, m.From.ID, m.Chat.ID, view)
+	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
 }
 
 func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -162,7 +163,7 @@ func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update
 		return
 	}
 	view := h.page(m.From.ID, h.service.setSurname(m.From.ID, m.Text))
-	h.show(ctx, b, m.From.ID, m.Chat.ID, view)
+	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
 }
 
 func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -174,7 +175,7 @@ func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 	if q.Message.Message == nil {
 		return
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, stalePage())
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, stalePage())
 }
 func (h *Handler) matchMessage(state fsm.StateID, update *models.Update) bool {
 	m := update.Message
@@ -187,7 +188,7 @@ func (h *Handler) matchMessage(state fsm.StateID, update *models.Update) bool {
 	}
 	return h.service.inState(m.From.ID, state)
 }
-func (h *Handler) show(ctx context.Context, b *bot.Bot, userID, chatID int64, page navigation.Page) {
+func (h *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, userID, chatID int64, page navigation.Page) {
 	if page.Key == "" {
 		page = profilePage(page.Text, fsm.Idle)
 	}
@@ -204,7 +205,7 @@ func (h *Handler) show(ctx context.Context, b *bot.Bot, userID, chatID int64, pa
 			return view, nil
 		}
 	}
-	if err := navigation.Show(ctx, b, chatID, page); err != nil {
+	if err := h.navigator.Show(ctx, b, update, chatID, page); err != nil {
 		slog.ErrorContext(ctx, "show profile failed", "error", err)
 	}
 }

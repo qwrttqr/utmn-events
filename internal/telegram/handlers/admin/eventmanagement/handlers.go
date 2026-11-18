@@ -1,4 +1,4 @@
-package event_management
+package eventmanagement
 
 import (
 	"context"
@@ -15,19 +15,20 @@ import (
 )
 
 type Editor interface {
-	Edit(context.Context, *bot.Bot, int64, int64, domain.Event, domain.EventField) error
+	Edit(context.Context, *bot.Bot, *models.Update, int64, int64, domain.Event, domain.EventField) error
 }
 
 type Handler struct {
-	service *EventManagementService
-	editor  Editor
+	navigator *navigation.Navigator
+	service   *EventManagementService
+	editor    Editor
 }
 
-func NewHandler(service *EventManagementService, editor Editor) *Handler {
-	return &Handler{service: service, editor: editor}
+func NewHandler(navigator *navigation.Navigator, service *EventManagementService, editor Editor) *Handler {
+	return &Handler{navigator: navigator, service: service, editor: editor}
 }
-func Register(b *bot.Bot, service *EventManagementService, editor Editor, guard bot.Middleware) {
-	h := NewHandler(service, editor)
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *EventManagementService, editor Editor, guard bot.Middleware) {
+	h := NewHandler(navigator, service, editor)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		return q != nil && (q.Data == "admin:events" || strings.HasPrefix(q.Data, callbackPrefix))
@@ -57,12 +58,12 @@ func (h *Handler) handleCallback(ctx context.Context, b *bot.Bot, update *models
 		page = navigation.Page{Key: "admin:events:error", Text: "Не удалось загрузить или изменить мероприятие. Попробуйте ещё раз.", Admin: true, Keyboard: retryKeyboard(q.Data)}
 	}
 	if edit != nil {
-		if err := h.editor.Edit(ctx, b, q.From.ID, q.Message.Message.Chat.ID, edit.event, edit.field); err != nil {
+		if err := h.editor.Edit(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, edit.event, edit.field); err != nil {
 			slog.ErrorContext(ctx, "open event editor failed", "error", err)
 		}
 		return
 	}
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, page); err != nil {
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, page); err != nil {
 		slog.ErrorContext(ctx, "show page failed", "error", err)
 	}
 }

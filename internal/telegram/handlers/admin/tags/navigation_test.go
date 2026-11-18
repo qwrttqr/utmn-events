@@ -34,7 +34,7 @@ func TestRestoreTagEditorKeepsPageAndSelection(t *testing.T) {
 		t.Fatalf("pagination queried offset %d, want %d", repo.offset, pageSize)
 	}
 	state, snapshot := service.snapshot(userID)
-	page := NewHandler(service).page(userID, view, state, snapshot)
+	page := (&Handler{service: service}).page(userID, view, state, snapshot)
 	_, current, _ := fsm.Load[session](machine, userID)
 	delete(current.selected, 7)
 	machine.Clear(userID)

@@ -1,4 +1,4 @@
-package event_editing
+package eventcreation
 
 import (
 	"context"
@@ -10,49 +10,55 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
-	"utmn-events-bot/internal/domain"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
 type Handler struct {
-	service *EventEditingService
+	navigator *navigation.Navigator
+	service   *EventCreationService
 }
 
-func NewHandler(service *EventEditingService) *Handler {
-	return &Handler{service: service}
+func NewHandler(navigator *navigation.Navigator, service *EventCreationService) *Handler {
+	return &Handler{navigator: navigator, service: service}
 }
 
-func (f *Handler) Edit(ctx context.Context, b *bot.Bot, userID, chatID int64, event domain.Event, field domain.EventField) error {
-	result, err := f.service.beginEdit(userID, event, field)
-	if err != nil {
-		return err
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *EventCreationService, guard bot.Middleware) {
+	handler := NewHandler(navigator, service)
+
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:create_event", bot.MatchTypeExact, handler.Begin, guard)
+
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventTitle, update) }, handler.Title, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventDescription, update) }, handler.Description, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventPhoto, update) }, handler.Photo, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventLocation, update) }, handler.Location, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventStart, update) }, handler.Start, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventEnd, update) }, handler.End, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventCapacity, update) }, handler.Capacity, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventTags, update) }, handler.Tags, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return handler.matchCallbackState(eventDescription, "skip_description", update)
+	}, handler.SkipDescription, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchCallbackState(eventPhoto, "skip_photo", update) }, handler.SkipPhoto, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return handler.matchCallbackState(eventCapacity, "unlimited_capacity", update)
+	}, handler.UnlimitedCapacity, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchCallbackState(eventTags, "skip_tags", update) }, handler.SkipTags, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchCallbackState(eventPreview, "save", update) }, handler.Save, guard)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:event:cancel", bot.MatchTypeExact, handler.Cancel, guard)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:event:", bot.MatchTypePrefix, handler.StaleCallback, guard)
+}
+
+func (f *Handler) Begin(ctx context.Context, b *bot.Bot, update *models.Update) {
+	query := update.CallbackQuery
+	if query == nil {
+		return
 	}
-	f.show(ctx, b, userID, chatID, result)
-	return nil
-}
-
-func Register(b *bot.Bot, service *EventEditingService, guard bot.Middleware) {
-	flow := NewHandler(service)
-
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchMessageState(eventTitle, update) }, flow.Title, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchMessageState(eventDescription, update) }, flow.Description, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchMessageState(eventPhoto, update) }, flow.Photo, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchMessageState(eventLocation, update) }, flow.Location, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchMessageState(eventStart, update) }, flow.Start, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchMessageState(eventEnd, update) }, flow.End, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchMessageState(eventCapacity, update) }, flow.Capacity, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchMessageState(eventTags, update) }, flow.Tags, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		return flow.matchCallbackState(eventDescription, "clear_description", update)
-	}, flow.SkipDescription, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchCallbackState(eventPhoto, "clear_photo", update) }, flow.SkipPhoto, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		return flow.matchCallbackState(eventCapacity, "unlimited_capacity", update)
-	}, flow.UnlimitedCapacity, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchCallbackState(eventTags, "clear_tags", update) }, flow.SkipTags, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return flow.matchCallbackState(eventPreview, "save", update) }, flow.Save, guard)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:event_edit:cancel", bot.MatchTypeExact, flow.Cancel, guard)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:event_edit:", bot.MatchTypePrefix, flow.StaleCallback, guard)
+	answerEventCallback(ctx, b, query.ID)
+	message := query.Message.Message
+	if message == nil {
+		return
+	}
+	f.show(ctx, b, update, query.From.ID, message.Chat.ID, f.service.begin(query.From.ID))
 }
 
 func (f *Handler) Title(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -62,7 +68,7 @@ func (f *Handler) Title(ctx context.Context, b *bot.Bot, update *models.Update) 
 	}
 	text := message.Text
 	result := f.service.setTitle(message.From.ID, text)
-	f.show(ctx, b, message.From.ID, message.Chat.ID, result)
+	f.show(ctx, b, update, message.From.ID, message.Chat.ID, result)
 }
 
 func (f *Handler) Description(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -72,7 +78,7 @@ func (f *Handler) Description(ctx context.Context, b *bot.Bot, update *models.Up
 	}
 	text := message.Text
 	result := f.service.setDescription(message.From.ID, text)
-	f.show(ctx, b, message.From.ID, message.Chat.ID, result)
+	f.show(ctx, b, update, message.From.ID, message.Chat.ID, result)
 }
 
 func (f *Handler) Photo(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -85,7 +91,7 @@ func (f *Handler) Photo(ctx context.Context, b *bot.Bot, update *models.Update) 
 		photo = message.Photo[len(message.Photo)-1].FileID
 	}
 	result := f.service.setPhoto(message.From.ID, photo)
-	f.show(ctx, b, message.From.ID, message.Chat.ID, result)
+	f.show(ctx, b, update, message.From.ID, message.Chat.ID, result)
 }
 
 func (f *Handler) Location(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -95,7 +101,7 @@ func (f *Handler) Location(ctx context.Context, b *bot.Bot, update *models.Updat
 	}
 	text := message.Text
 	result := f.service.setLocation(message.From.ID, text)
-	f.show(ctx, b, message.From.ID, message.Chat.ID, result)
+	f.show(ctx, b, update, message.From.ID, message.Chat.ID, result)
 }
 
 func (f *Handler) Start(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -105,7 +111,7 @@ func (f *Handler) Start(ctx context.Context, b *bot.Bot, update *models.Update) 
 	}
 	text := message.Text
 	result := f.service.setStart(message.From.ID, text)
-	f.show(ctx, b, message.From.ID, message.Chat.ID, result)
+	f.show(ctx, b, update, message.From.ID, message.Chat.ID, result)
 }
 
 func (f *Handler) End(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -115,7 +121,7 @@ func (f *Handler) End(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 	text := message.Text
 	result := f.service.setEnd(message.From.ID, text)
-	f.show(ctx, b, message.From.ID, message.Chat.ID, result)
+	f.show(ctx, b, update, message.From.ID, message.Chat.ID, result)
 }
 
 func (f *Handler) Capacity(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -125,7 +131,7 @@ func (f *Handler) Capacity(ctx context.Context, b *bot.Bot, update *models.Updat
 	}
 	text := message.Text
 	result := f.service.setCapacity(message.From.ID, text)
-	f.show(ctx, b, message.From.ID, message.Chat.ID, result)
+	f.show(ctx, b, update, message.From.ID, message.Chat.ID, result)
 }
 
 func (f *Handler) Tags(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -135,7 +141,7 @@ func (f *Handler) Tags(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 	text := message.Text
 	result := f.service.setTags(message.From.ID, text)
-	f.show(ctx, b, message.From.ID, message.Chat.ID, result)
+	f.show(ctx, b, update, message.From.ID, message.Chat.ID, result)
 }
 
 func (f *Handler) SkipDescription(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -148,7 +154,7 @@ func (f *Handler) SkipDescription(ctx context.Context, b *bot.Bot, update *model
 		return
 	}
 	result := f.service.skipDescription(query.From.ID)
-	f.show(ctx, b, query.From.ID, query.Message.Message.Chat.ID, result)
+	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
 func (f *Handler) SkipPhoto(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -161,7 +167,7 @@ func (f *Handler) SkipPhoto(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	result := f.service.skipPhoto(query.From.ID)
-	f.show(ctx, b, query.From.ID, query.Message.Message.Chat.ID, result)
+	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
 func (f *Handler) UnlimitedCapacity(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -174,7 +180,7 @@ func (f *Handler) UnlimitedCapacity(ctx context.Context, b *bot.Bot, update *mod
 		return
 	}
 	result := f.service.unlimitedCapacity(query.From.ID)
-	f.show(ctx, b, query.From.ID, query.Message.Message.Chat.ID, result)
+	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
 func (f *Handler) SkipTags(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -187,7 +193,7 @@ func (f *Handler) SkipTags(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 	result := f.service.skipTags(query.From.ID)
-	f.show(ctx, b, query.From.ID, query.Message.Message.Chat.ID, result)
+	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
 func (f *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -205,7 +211,7 @@ func (f *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if err != nil {
 		slog.ErrorContext(ctx, "event save failed", "user_id", query.From.ID, "error", err)
 	}
-	f.show(ctx, b, query.From.ID, query.Message.Message.Chat.ID, result)
+	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
 func (f *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -218,7 +224,7 @@ func (f *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 		return
 	}
 	result := f.service.cancelForm(query.From.ID)
-	f.show(ctx, b, query.From.ID, query.Message.Message.Chat.ID, result)
+	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
 func (f *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -231,7 +237,7 @@ func (f *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 		return
 	}
 	result := f.service.staleCallback(query.From.ID)
-	f.show(ctx, b, query.From.ID, query.Message.Message.Chat.ID, result)
+	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
 func (f *Handler) matchMessageState(step fsm.StateID, update *models.Update) bool {
@@ -248,7 +254,7 @@ func (f *Handler) matchMessageState(step fsm.StateID, update *models.Update) boo
 
 func (f *Handler) matchCallbackState(step fsm.StateID, action string, update *models.Update) bool {
 	q := update.CallbackQuery
-	return q != nil && q.Data == "admin:event_edit:"+action && f.service.inState(q.From.ID, step)
+	return q != nil && q.Data == "admin:event:"+action && f.service.inState(q.From.ID, step)
 }
 
 func answerEventCallback(ctx context.Context, b *bot.Bot, id string) {
@@ -257,8 +263,8 @@ func answerEventCallback(ctx context.Context, b *bot.Bot, id string) {
 	}
 }
 
-func (f *Handler) show(ctx context.Context, b *bot.Bot, userID, chatID int64, result editingResult) {
-	if err := navigation.Show(ctx, b, chatID, f.page(userID, result)); err != nil {
+func (f *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, userID, chatID int64, result creationResult) {
+	if err := f.navigator.Show(ctx, b, update, chatID, f.getPage(userID, result)); err != nil {
 		slog.ErrorContext(ctx, "show event screen failed", "error", err)
 	}
 }

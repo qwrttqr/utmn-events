@@ -1,4 +1,4 @@
-package event_creation
+package eventcreation
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
-func (f *Handler) page(userID int64, result creationResult) navigation.Page {
+func (f *Handler) getPage(userID int64, result creationResult) navigation.Page {
 	var message string
 	history := navigation.HistoryMatchCurrent
 	switch result.status {
@@ -65,12 +65,12 @@ func (f *Handler) page(userID int64, result creationResult) navigation.Page {
 	if message != "" {
 		page.Text = message + "\n\n" + page.Text
 	}
-	page.History = history
+	page.HistoryMode = history
 
 	state, saved := result.state, cloneDraft(result.draft)
 	page.Restore = func(context.Context) (navigation.Page, error) {
 		f.service.restore(userID, state, saved)
-		return f.page(userID, creationResult{state: state, draft: saved}), nil
+		return f.getPage(userID, creationResult{state: state, draft: saved}), nil
 	}
 	return page
 }

@@ -4,34 +4,37 @@ import (
 	"github.com/go-telegram/bot"
 
 	"utmn-events-bot/internal/telegram/handlers/admin/announcements"
-	"utmn-events-bot/internal/telegram/handlers/admin/event_creation"
-	"utmn-events-bot/internal/telegram/handlers/admin/event_editing"
-	"utmn-events-bot/internal/telegram/handlers/admin/event_management"
+	"utmn-events-bot/internal/telegram/handlers/admin/eventcreation"
+	"utmn-events-bot/internal/telegram/handlers/admin/eventediting"
+	"utmn-events-bot/internal/telegram/handlers/admin/eventmanagement"
 	"utmn-events-bot/internal/telegram/handlers/admin/menu"
 	"utmn-events-bot/internal/telegram/handlers/admin/tags"
 	adminusers "utmn-events-bot/internal/telegram/handlers/admin/users"
 	"utmn-events-bot/internal/telegram/middleware"
+	"utmn-events-bot/internal/telegram/navigation"
 )
 
 func Register(
 	b *bot.Bot,
+	navigator *navigation.Navigator,
 	adminIDs []int64,
-	eventCreationService *event_creation.EventCreationService,
+	eventCreationService *eventcreation.EventCreationService,
 	tagsService *tags.TagsService,
-	managementService *event_management.EventManagementService,
+	managementService *eventmanagement.EventManagementService,
 	usersService *adminusers.UsersService,
 	announcementsService *announcements.AnnouncementsService,
-	eventEditingService *event_editing.EventEditingService,
+	eventEditingService *eventediting.EventEditingService,
 	finish func(int64),
 ) {
 	guard := middleware.RequireAdmin(adminIDs)
-	menu.RegisterCommand(b, guard, finish)
+	menu.RegisterCommand(b, navigator, guard, finish)
 
-	event_creation.Register(b, eventCreationService, guard)
-	tags.Register(b, tagsService, guard)
-	event_editing.Register(b, eventEditingService, guard)
-	event_management.Register(b, managementService, event_editing.NewHandler(eventEditingService), guard)
-	adminusers.Register(b, usersService, guard)
-	announcements.Register(b, announcementsService, guard)
-	menu.RegisterCallbacks(b, guard, finish)
+	eventcreation.Register(b, navigator, eventCreationService, guard)
+	tags.Register(b, navigator, tagsService, guard)
+	editor := eventediting.NewHandler(navigator, eventEditingService)
+	editor.Register(b, guard)
+	eventmanagement.Register(b, navigator, managementService, editor, guard)
+	adminusers.Register(b, navigator, usersService, guard)
+	announcements.Register(b, navigator, announcementsService, guard)
+	menu.RegisterCallbacks(b, navigator, guard, finish)
 }

@@ -12,12 +12,13 @@ import (
 )
 
 type Handler struct {
+	navigator  *navigation.Navigator
 	adminIDs   []int64
 	beforeOpen func(int64)
 }
 
-func Register(b *bot.Bot, adminIDs []int64, beforeOpen func(int64)) {
-	h := &Handler{adminIDs: slices.Clone(adminIDs), beforeOpen: beforeOpen}
+func Register(b *bot.Bot, navigator *navigation.Navigator, adminIDs []int64, beforeOpen func(int64)) {
+	h := &Handler{navigator: navigator, adminIDs: slices.Clone(adminIDs), beforeOpen: beforeOpen}
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommandStartOnly, h.Start)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:menu", bot.MatchTypeExact, h.Menu)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "home:menu", bot.MatchTypeExact, h.Home)
@@ -28,7 +29,7 @@ func (h *Handler) Start(ctx context.Context, b *bot.Bot, update *models.Update) 
 		return
 	}
 	h.beforeOpen(m.From.ID)
-	if err := navigation.Show(ctx, b, m.Chat.ID, DefaultPage(m.From.ID, h.adminIDs)); err != nil {
+	if err := h.navigator.Show(ctx, b, update, m.Chat.ID, DefaultPage(m.From.ID, h.adminIDs)); err != nil {
 		slog.ErrorContext(ctx, "show start menu failed", "error", err)
 	}
 }
@@ -44,7 +45,7 @@ func (h *Handler) Menu(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	h.beforeOpen(q.From.ID)
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, MenuPage(q.From.ID, h.adminIDs)); err != nil {
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, GetMainPage(q.From.ID, h.adminIDs)); err != nil {
 		slog.ErrorContext(ctx, "show user menu failed", "error", err)
 	}
 }
@@ -60,7 +61,7 @@ func (h *Handler) Home(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	h.beforeOpen(q.From.ID)
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, DefaultPage(q.From.ID, h.adminIDs)); err != nil {
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, DefaultPage(q.From.ID, h.adminIDs)); err != nil {
 		slog.ErrorContext(ctx, "show user menu failed", "error", err)
 	}
 }

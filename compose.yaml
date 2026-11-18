@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
+      BOT_PROXY_URL: ${BOT_PROXY_URL:-}
       DATABASE_URL: ${DATABASE_URL}
       BOT_ADMIN_TELEGRAM_IDS: ${BOT_ADMIN_TELEGRAM_IDS}
     depends_on:

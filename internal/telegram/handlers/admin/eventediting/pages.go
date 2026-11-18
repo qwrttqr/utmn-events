@@ -1,4 +1,4 @@
-package event_editing
+package eventediting
 
 import (
 	"context"
@@ -70,7 +70,7 @@ func (f *Handler) page(userID int64, result editingResult) navigation.Page {
 	if message != "" {
 		page.Text = message + "\n\n" + page.Text
 	}
-	page.History = history
+	page.HistoryMode = history
 
 	state, saved := result.state, cloneDraft(result.draft)
 	page.Restore = func(context.Context) (navigation.Page, error) {

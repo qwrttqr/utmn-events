@@ -13,15 +13,16 @@ import (
 )
 
 type Handler struct {
-	service *AnnouncementsService
+	navigator *navigation.Navigator
+	service   *AnnouncementsService
 }
 
-func NewHandler(service *AnnouncementsService) *Handler {
-	return &Handler{service: service}
+func NewHandler(navigator *navigation.Navigator, service *AnnouncementsService) *Handler {
+	return &Handler{navigator: navigator, service: service}
 }
 
-func Register(b *bot.Bot, service *AnnouncementsService, guard bot.Middleware) {
-	h := NewHandler(service)
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *AnnouncementsService, guard bot.Middleware) {
+	h := NewHandler(navigator, service)
 
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:announcement", bot.MatchTypeExact, h.Begin, guard)
 
@@ -56,7 +57,7 @@ func (h *Handler) Begin(ctx context.Context, b *bot.Bot, update *models.Update) 
 		return
 	}
 	view := resultPage(h.service.begin(q.From.ID))
-	h.show(ctx, b, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) Text(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -65,7 +66,7 @@ func (h *Handler) Text(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	view := resultPage(h.service.setText(m.From.ID, m.Text))
-	h.show(ctx, b, m.Chat.ID, view)
+	h.show(ctx, b, update, m.Chat.ID, view)
 }
 
 func (h *Handler) Edit(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -78,7 +79,7 @@ func (h *Handler) Edit(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	view := resultPage(h.service.edit(q.From.ID))
-	h.show(ctx, b, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) Send(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -93,10 +94,10 @@ func (h *Handler) Send(ctx context.Context, b *bot.Bot, update *models.Update) {
 	result, job, err := h.service.prepareSend(q.From.ID)
 	if err != nil {
 		slog.ErrorContext(ctx, "prepare announcement failed", "user_id", q.From.ID, "error", err)
-		h.show(ctx, b, q.Message.Message.Chat.ID, announcementPage("Не удалось начать рассылку объявления.", fsm.Idle, false))
+		h.show(ctx, b, update, q.Message.Message.Chat.ID, announcementPage("Не удалось начать рассылку объявления.", fsm.Idle, false))
 		return
 	}
-	h.show(ctx, b, q.Message.Message.Chat.ID, resultPage(result))
+	h.show(ctx, b, update, q.Message.Message.Chat.ID, resultPage(result))
 	if job == nil {
 		return
 	}
@@ -119,7 +120,7 @@ func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 		return
 	}
 	view := resultPage(h.service.cancelDraft(q.From.ID))
-	h.show(ctx, b, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -131,11 +132,11 @@ func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 	if q.Message.Message == nil {
 		return
 	}
-	h.show(ctx, b, q.Message.Message.Chat.ID, stalePage())
+	h.show(ctx, b, update, q.Message.Message.Chat.ID, stalePage())
 }
 
-func (h *Handler) show(ctx context.Context, b *bot.Bot, chatID int64, page navigation.Page) {
-	if err := navigation.Show(ctx, b, chatID, page); err != nil {
+func (h *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, page navigation.Page) {
+	if err := h.navigator.Show(ctx, b, update, chatID, page); err != nil {
 		slog.ErrorContext(ctx, "show announcement screen failed", "error", err)
 	}
 }

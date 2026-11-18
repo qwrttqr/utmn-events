@@ -15,15 +15,16 @@ import (
 )
 
 type Handler struct {
-	service *EventsService
+	navigator *navigation.Navigator
+	service   *EventsService
 }
 
-func NewHandler(service *EventsService) *Handler {
-	return &Handler{service: service}
+func NewHandler(navigator *navigation.Navigator, service *EventsService) *Handler {
+	return &Handler{navigator: navigator, service: service}
 }
 
-func Register(b *bot.Bot, service *EventsService) {
-	h := NewHandler(service)
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *EventsService) {
+	h := NewHandler(navigator, service)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		if q == nil {
@@ -60,7 +61,7 @@ func (h *Handler) handleCallback(ctx context.Context, b *bot.Bot, update *models
 		slog.ErrorContext(ctx, "events action failed", "user_id", q.From.ID, "error", err)
 		page = navigation.Page{Key: "user:events:error", Text: "Не удалось выполнить действие. Попробуйте ещё раз.", Keyboard: retryKeyboard(q.Data)}
 	}
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, page); err != nil {
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, page); err != nil {
 		slog.ErrorContext(ctx, "show page failed", "error", err)
 	}
 }

@@ -10,14 +10,17 @@ import (
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
-type Handler struct{ beforeOpen func(int64) }
+type Handler struct {
+	navigator  *navigation.Navigator
+	beforeOpen func(int64)
+}
 
-func RegisterCommand(b *bot.Bot, guard bot.Middleware, beforeOpen func(int64)) {
-	h := &Handler{beforeOpen: beforeOpen}
+func RegisterCommand(b *bot.Bot, navigator *navigation.Navigator, guard bot.Middleware, beforeOpen func(int64)) {
+	h := &Handler{navigator: navigator, beforeOpen: beforeOpen}
 	b.RegisterHandler(bot.HandlerTypeMessageText, "admin", bot.MatchTypeCommandStartOnly, h.ShowAdminMenu, guard)
 }
-func RegisterCallbacks(b *bot.Bot, guard bot.Middleware, beforeOpen func(int64)) {
-	h := &Handler{beforeOpen: beforeOpen}
+func RegisterCallbacks(b *bot.Bot, navigator *navigation.Navigator, guard bot.Middleware, beforeOpen func(int64)) {
+	h := &Handler{navigator: navigator, beforeOpen: beforeOpen}
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:menu", bot.MatchTypeExact, h.Menu, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:", bot.MatchTypePrefix, h.Unknown, guard)
 }
@@ -27,7 +30,7 @@ func (h *Handler) ShowAdminMenu(ctx context.Context, b *bot.Bot, update *models.
 		return
 	}
 	h.beforeOpen(m.From.ID)
-	if err := navigation.Show(ctx, b, m.Chat.ID, GetMainPage()); err != nil {
+	if err := h.navigator.Show(ctx, b, update, m.Chat.ID, GetMainPage()); err != nil {
 		slog.ErrorContext(ctx, "show admin menu failed", "error", err)
 	}
 }
@@ -43,7 +46,7 @@ func (h *Handler) Menu(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if q.Message.Message == nil {
 		return
 	}
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, GetMainPage()); err != nil {
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, GetMainPage()); err != nil {
 		slog.ErrorContext(ctx, "show admin page failed", "error", err)
 	}
 }
@@ -59,7 +62,7 @@ func (h *Handler) Unknown(ctx context.Context, b *bot.Bot, update *models.Update
 	if q.Message.Message == nil {
 		return
 	}
-	if err := navigation.Show(ctx, b, q.Message.Message.Chat.ID, unknownPage(q.Data)); err != nil {
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, unknownPage(q.Data)); err != nil {
 		slog.ErrorContext(ctx, "show admin page failed", "error", err)
 	}
 }

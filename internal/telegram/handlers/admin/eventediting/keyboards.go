@@ -1,4 +1,4 @@
-package event_editing
+package eventediting
 
 import (
 	"github.com/go-telegram/bot/models"

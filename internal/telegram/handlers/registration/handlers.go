@@ -11,11 +11,15 @@ import (
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
-type Handler struct{ service *RegistrationService }
+type Handler struct {
+	navigator *navigation.Navigator
+	service   *RegistrationService
+}
 
-func NewHandler(service *RegistrationService) *Handler { return &Handler{service: service} }
-func Register(b *bot.Bot, service *RegistrationService) {
-	h := NewHandler(service)
+func NewHandler(navigator *navigation.Navigator, service *RegistrationService) *Handler {
+	return &Handler{navigator: navigator, service: service}
+}
+func (h *Handler) Register(b *bot.Bot) {
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "registration:start", bot.MatchTypeExact, h.Start)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "registration:restart", bot.MatchTypeExact, h.Start)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "registration:confirm", bot.MatchTypeExact, h.Confirm)
@@ -61,7 +65,7 @@ func (h *Handler) FirstName(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	view := resultPage(h.service.setFirstName(m.From.ID, m.Text))
-	send(ctx, b, m.Chat.ID, view)
+	h.send(ctx, b, update, m.Chat.ID, view)
 }
 
 func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -70,7 +74,7 @@ func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 	view := resultPage(h.service.setLastName(m.From.ID, m.Text))
-	send(ctx, b, m.Chat.ID, view)
+	h.send(ctx, b, update, m.Chat.ID, view)
 }
 
 func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -79,7 +83,7 @@ func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update
 		return
 	}
 	view := resultPage(h.service.setSurname(m.From.ID, m.Text))
-	send(ctx, b, m.Chat.ID, view)
+	h.send(ctx, b, update, m.Chat.ID, view)
 }
 
 func (h *Handler) Start(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -95,7 +99,7 @@ func (h *Handler) Start(ctx context.Context, b *bot.Bot, update *models.Update) 
 		return
 	}
 	view := resultPage(h.service.begin(user.ID, user.Username))
-	send(ctx, b, message.Chat.ID, view)
+	h.send(ctx, b, update, message.Chat.ID, view)
 }
 
 func (h *Handler) Confirm(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -119,7 +123,7 @@ func (h *Handler) Confirm(ctx context.Context, b *bot.Bot, update *models.Update
 		view.Text = "Не удалось обратиться к базе данных. Попробуйте ещё раз.\n\n" + view.Text
 		view.Root = false
 	}
-	send(ctx, b, message.Chat.ID, view)
+	h.send(ctx, b, update, message.Chat.ID, view)
 }
 
 func (h *Handler) SkipSurname(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -135,7 +139,7 @@ func (h *Handler) SkipSurname(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 	view := resultPage(h.service.skipSurname(user.ID))
-	send(ctx, b, message.Chat.ID, view)
+	h.send(ctx, b, update, message.Chat.ID, view)
 }
 
 func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -151,7 +155,7 @@ func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 		return
 	}
 	view := resultPage(h.service.cancelDraft(user.ID))
-	send(ctx, b, message.Chat.ID, view)
+	h.send(ctx, b, update, message.Chat.ID, view)
 }
 
 func (h *Handler) Preview(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -167,11 +171,11 @@ func (h *Handler) Preview(ctx context.Context, b *bot.Bot, update *models.Update
 		return
 	}
 	view := resultPage(h.service.preview(user.ID, user.Username))
-	send(ctx, b, message.Chat.ID, view)
+	h.send(ctx, b, update, message.Chat.ID, view)
 }
 
-func send(ctx context.Context, b *bot.Bot, chatID int64, page navigation.Page) {
-	if err := navigation.Show(ctx, b, chatID, page); err != nil {
+func (h *Handler) send(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, page navigation.Page) {
+	if err := h.navigator.Show(ctx, b, update, chatID, page); err != nil {
 		slog.ErrorContext(ctx, "send registration message failed", "error", err)
 	}
 }

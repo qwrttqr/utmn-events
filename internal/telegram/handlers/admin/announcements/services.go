@@ -88,15 +88,14 @@ func (s *AnnouncementsService) Close() {
 }
 
 func (s *AnnouncementsService) enteringText(userID int64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.machine.CurrentState(userID) == textState
 }
 
 func (s *AnnouncementsService) begin(userID int64) announcementResult {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.active[userID] {
+	active := s.active[userID]
+	s.mu.Unlock()
+	if active {
 		return announcementResult{status: broadcastInProgress}
 	}
 	d := draft{}
@@ -105,8 +104,6 @@ func (s *AnnouncementsService) begin(userID int64) announcementResult {
 }
 
 func (s *AnnouncementsService) setText(userID int64, text string) announcementResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists || state != textState {
 		return announcementResult{status: announcementMissing}
@@ -128,8 +125,6 @@ func (s *AnnouncementsService) setText(userID int64, text string) announcementRe
 }
 
 func (s *AnnouncementsService) edit(userID int64) announcementResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists || state != previewState {
 		return announcementResult{status: announcementStale}
@@ -140,8 +135,6 @@ func (s *AnnouncementsService) edit(userID int64) announcementResult {
 }
 
 func (s *AnnouncementsService) cancelDraft(userID int64) announcementResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, _, exists := fsm.Load[draft](s.machine, userID)
 	if !exists || (state != textState && state != previewState) {
 		return announcementResult{status: announcementStale}

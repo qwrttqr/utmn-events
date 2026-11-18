@@ -1,11 +1,10 @@
-package event_management
+package eventmanagement
 
 import (
 	"context"
 	"errors"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	_ "time/tzdata"
 
@@ -62,7 +61,6 @@ type editRequest struct {
 }
 
 type EventManagementService struct {
-	mu       sync.Mutex
 	machine  *fsm.FSM
 	repo     Repository
 	users    UserRepository
@@ -83,8 +81,6 @@ func NewService(
 	}
 }
 func (f *EventManagementService) Cancel(id int64) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	switch f.machine.CurrentState(id) {
 	case list, card, fields, confirmDelete, participants:
 		f.machine.Clear(id)
@@ -127,8 +123,6 @@ func (f *EventManagementService) process(ctx context.Context, userID int64, call
 }
 
 func (f *EventManagementService) page(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
@@ -146,8 +140,6 @@ func (f *EventManagementService) page(ctx context.Context, userID int64, callbac
 }
 
 func (f *EventManagementService) open(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
@@ -161,8 +153,6 @@ func (f *EventManagementService) open(ctx context.Context, userID int64, callbac
 }
 
 func (f *EventManagementService) edit(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
@@ -176,8 +166,6 @@ func (f *EventManagementService) edit(ctx context.Context, userID int64, callbac
 }
 
 func (f *EventManagementService) participants(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
@@ -191,8 +179,6 @@ func (f *EventManagementService) participants(ctx context.Context, userID int64,
 }
 
 func (f *EventManagementService) field(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
@@ -212,8 +198,6 @@ func (f *EventManagementService) field(ctx context.Context, userID int64, callba
 }
 
 func (f *EventManagementService) delete(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
@@ -227,8 +211,6 @@ func (f *EventManagementService) delete(ctx context.Context, userID int64, callb
 }
 
 func (f *EventManagementService) keep(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
@@ -242,8 +224,6 @@ func (f *EventManagementService) keep(ctx context.Context, userID int64, callbac
 }
 
 func (f *EventManagementService) confirmDelete(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, s, exists := fsm.Load[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
@@ -259,8 +239,6 @@ func (f *EventManagementService) confirmDelete(ctx context.Context, userID int64
 }
 
 func (f *EventManagementService) list(ctx context.Context, userID int64) (managementResult, *editRequest, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 
 	return f.loadAndSave(ctx, userID, list, session{})
 }
@@ -323,8 +301,6 @@ func (f *EventManagementService) loadPage(ctx context.Context, state fsm.StateID
 }
 
 func (f *EventManagementService) restore(ctx context.Context, userID int64, state fsm.StateID, s session) (managementResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	result, _, err := f.loadAndSave(ctx, userID, state, s)
 	return result, err
 }

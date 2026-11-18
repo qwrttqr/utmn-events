@@ -13,14 +13,15 @@ import (
 )
 
 type Handler struct {
-	service *TagsService
+	navigator *navigation.Navigator
+	service   *TagsService
 }
 
-func NewHandler(service *TagsService) *Handler {
-	return &Handler{service: service}
+func NewHandler(navigator *navigation.Navigator, service *TagsService) *Handler {
+	return &Handler{navigator: navigator, service: service}
 }
-func Register(b *bot.Bot, service *TagsService, guard bot.Middleware) {
-	h := NewHandler(service)
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *TagsService, guard bot.Middleware) {
+	h := NewHandler(navigator, service)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:tags", bot.MatchTypeExact, h.List, guard)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
@@ -108,7 +109,7 @@ func (h *Handler) List(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) Create(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -128,7 +129,7 @@ func (h *Handler) Create(ctx context.Context, b *bot.Bot, update *models.Update)
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) Assign(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -148,7 +149,7 @@ func (h *Handler) Assign(ctx context.Context, b *bot.Bot, update *models.Update)
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) Page(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -168,7 +169,7 @@ func (h *Handler) Page(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) SelectEvent(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -188,7 +189,7 @@ func (h *Handler) SelectEvent(ctx context.Context, b *bot.Bot, update *models.Up
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) ToggleTag(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -208,7 +209,7 @@ func (h *Handler) ToggleTag(ctx context.Context, b *bot.Bot, update *models.Upda
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) ClearTags(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -228,7 +229,7 @@ func (h *Handler) ClearTags(ctx context.Context, b *bot.Bot, update *models.Upda
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -248,7 +249,7 @@ func (h *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -268,7 +269,7 @@ func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 	if err != nil {
 		slog.ErrorContext(ctx, "tag action failed", "user_id", q.From.ID, "error", err)
 	}
-	h.show(ctx, b, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
 func (h *Handler) Name(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -282,11 +283,11 @@ func (h *Handler) Name(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if err != nil {
 		slog.ErrorContext(ctx, "create tag failed", "user_id", m.From.ID, "error", err)
 	}
-	h.show(ctx, b, m.From.ID, m.Chat.ID, view)
+	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
 }
-func (h *Handler) show(ctx context.Context, b *bot.Bot, userID, chatID int64, result tagResult) {
+func (h *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, userID, chatID int64, result tagResult) {
 	state, snapshot := h.service.snapshot(userID)
-	if err := navigation.Show(ctx, b, chatID, h.page(userID, result, state, snapshot)); err != nil {
+	if err := h.navigator.Show(ctx, b, update, chatID, h.page(userID, result, state, snapshot)); err != nil {
 		slog.ErrorContext(ctx, "show tags failed", "error", err)
 	}
 }

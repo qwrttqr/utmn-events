@@ -1,4 +1,4 @@
-package event_creation
+package eventcreation
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	_ "time/tzdata"
 	"unicode/utf8"
@@ -68,7 +67,6 @@ type creationResult struct {
 }
 
 type EventCreationService struct {
-	mu       sync.Mutex
 	machine  *fsm.FSM
 	repo     Repository
 	location *time.Location
@@ -85,8 +83,6 @@ func NewService(machine *fsm.FSM, repository Repository) (*EventCreationService,
 }
 
 func (f *EventCreationService) begin(userID int64) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	d := eventDraft{}
 	f.machine.Replace(userID, eventTitle, d)
 	return creationResult{state: eventTitle, draft: d, status: stepStarted}
@@ -129,8 +125,6 @@ func (f *EventCreationService) completeStep(userID int64, state fsm.StateID, d e
 }
 
 func (f *EventCreationService) cancelForm(userID int64) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	_, _, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -141,8 +135,6 @@ func (f *EventCreationService) cancelForm(userID int64) creationResult {
 }
 
 func (f *EventCreationService) setTitle(userID int64, text string) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -163,8 +155,6 @@ func (f *EventCreationService) setTitle(userID int64, text string) creationResul
 }
 
 func (f *EventCreationService) setDescription(userID int64, text string) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -185,8 +175,6 @@ func (f *EventCreationService) setDescription(userID int64, text string) creatio
 }
 
 func (f *EventCreationService) skipDescription(userID int64) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -200,8 +188,6 @@ func (f *EventCreationService) skipDescription(userID int64) creationResult {
 }
 
 func (f *EventCreationService) setPhoto(userID int64, photo string) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -218,8 +204,6 @@ func (f *EventCreationService) setPhoto(userID int64, photo string) creationResu
 }
 
 func (f *EventCreationService) skipPhoto(userID int64) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -233,8 +217,6 @@ func (f *EventCreationService) skipPhoto(userID int64) creationResult {
 }
 
 func (f *EventCreationService) setLocation(userID int64, text string) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -255,8 +237,6 @@ func (f *EventCreationService) setLocation(userID int64, text string) creationRe
 }
 
 func (f *EventCreationService) setStart(userID int64, text string) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -281,8 +261,6 @@ func (f *EventCreationService) setStart(userID int64, text string) creationResul
 }
 
 func (f *EventCreationService) setEnd(userID int64, text string) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -307,8 +285,6 @@ func (f *EventCreationService) setEnd(userID int64, text string) creationResult 
 }
 
 func (f *EventCreationService) setCapacity(userID int64, text string) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -331,8 +307,6 @@ func (f *EventCreationService) setCapacity(userID int64, text string) creationRe
 }
 
 func (f *EventCreationService) unlimitedCapacity(userID int64) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -346,8 +320,6 @@ func (f *EventCreationService) unlimitedCapacity(userID int64) creationResult {
 }
 
 func (f *EventCreationService) setTags(userID int64, text string) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -384,8 +356,6 @@ func (f *EventCreationService) setTags(userID int64, text string) creationResult
 }
 
 func (f *EventCreationService) skipTags(userID int64) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
@@ -399,8 +369,6 @@ func (f *EventCreationService) skipTags(userID int64) creationResult {
 }
 
 func (f *EventCreationService) confirmEvent(ctx context.Context, userID int64) (creationResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}, nil
@@ -432,20 +400,14 @@ func (f *EventCreationService) reenterDates(userID int64, d eventDraft) creation
 }
 
 func (f *EventCreationService) inState(userID int64, step fsm.StateID) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	return f.machine.CurrentState(userID) == step
 }
 
 func (f *EventCreationService) restore(userID int64, state fsm.StateID, saved eventDraft) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.machine.Replace(userID, state, cloneDraft(saved))
 }
 
 func (f *EventCreationService) staleCallback(userID int64) creationResult {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}

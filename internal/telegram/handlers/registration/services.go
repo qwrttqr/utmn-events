@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"unicode"
 	"unicode/utf8"
 	"utmn-events-bot/internal/domain"
@@ -43,7 +42,6 @@ type UserRepository interface {
 }
 
 type RegistrationService struct {
-	mu      sync.Mutex
 	users   UserRepository
 	machine *fsm.FSM
 }
@@ -64,35 +62,25 @@ func (s *RegistrationService) isRegistered(ctx context.Context, userID int64) (b
 }
 
 func (s *RegistrationService) Cancel(userID int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.clear(userID)
 }
 
 func (s *RegistrationService) hasDraft(userID int64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	_, _, exists := fsm.Load[draft](s.machine, userID)
 	return exists
 }
 
 func (s *RegistrationService) inState(userID int64, expected fsm.StateID) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.machine.CurrentState(userID) == expected
 }
 
 func (s *RegistrationService) begin(userID int64, username string) registrationResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	d := draft{profile: domain.User{TelegramID: userID, Username: username, Role: "user"}}
 	s.machine.Replace(userID, firstName, d)
 	return registrationResult{state: firstName, draft: d}
 }
 
 func (s *RegistrationService) setFirstName(userID int64, text string) registrationResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}
@@ -110,8 +98,6 @@ func (s *RegistrationService) setFirstName(userID int64, text string) registrati
 }
 
 func (s *RegistrationService) setLastName(userID int64, text string) registrationResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}
@@ -129,8 +115,6 @@ func (s *RegistrationService) setLastName(userID int64, text string) registratio
 }
 
 func (s *RegistrationService) setSurname(userID int64, text string) registrationResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}
@@ -148,8 +132,6 @@ func (s *RegistrationService) setSurname(userID int64, text string) registration
 }
 
 func (s *RegistrationService) skipSurname(userID int64) registrationResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}
@@ -163,8 +145,6 @@ func (s *RegistrationService) skipSurname(userID int64) registrationResult {
 }
 
 func (s *RegistrationService) confirm(ctx context.Context, userID int64, username string) (registrationResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}, nil
@@ -181,15 +161,11 @@ func (s *RegistrationService) confirm(ctx context.Context, userID int64, usernam
 }
 
 func (s *RegistrationService) cancelDraft(userID int64) registrationResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.clear(userID)
 	return registrationResult{status: registrationCancelled}
 }
 
 func (s *RegistrationService) preview(userID int64, username string) registrationResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	state, d, exists := fsm.Load[draft](s.machine, userID)
 	if !exists {
 		state = firstName

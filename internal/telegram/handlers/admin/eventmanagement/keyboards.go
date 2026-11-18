@@ -1,4 +1,4 @@
-package event_management
+package eventmanagement
 
 import (
 	"fmt"

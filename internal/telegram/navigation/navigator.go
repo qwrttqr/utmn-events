@@ -31,7 +31,7 @@ type Page struct {
 	Root         bool
 	NoNavigation bool
 	ClearHistory bool
-	History      HistoryMode
+	HistoryMode  HistoryMode
 	Restore      func(context.Context) (Page, error)
 }
 
@@ -43,18 +43,12 @@ type session struct {
 	keyboard *models.InlineKeyboardMarkup
 }
 
-type request struct {
-	navigator *Navigator
-	update    *models.Update
-}
-type contextKey struct{}
-
 type Navigator struct {
-	mu       sync.Mutex
-	sessions map[int64]*session
-	adminIDs []int64
-	home     func(int64) Page
-	cleanup  func(int64)
+	sessionsMu sync.Mutex
+	sessions   map[int64]*session
+	adminIDs   []int64
+	home       func(int64) Page
+	cleanup    func(int64)
 }
 
 func New(adminIDs []int64, home func(int64) Page) *Navigator {
@@ -63,32 +57,30 @@ func New(adminIDs []int64, home func(int64) Page) *Navigator {
 
 func (n *Navigator) SetCleanup(cleanup func(int64)) { n.cleanup = cleanup }
 
-func (n *Navigator) Middleware(next bot.HandlerFunc) bot.HandlerFunc {
-	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-		next(context.WithValue(ctx, contextKey{}, request{n, update}), b, update)
-	}
-}
-
 func (n *Navigator) Register(b *bot.Bot) {
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "nav:", bot.MatchTypePrefix, n.handle)
 }
 
-func Show(ctx context.Context, b *bot.Bot, chatID int64, page Page) error {
-	r, managed := ctx.Value(contextKey{}).(request)
-	if !managed || chatID <= 0 {
-		_, err := render(ctx, b, chatID, page, page.Keyboard)
-		return err
-	}
-	n := r.navigator
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if page.Admin && !slices.Contains(n.adminIDs, chatID) {
-		return errors.New("admin page access denied")
-	}
+func (n *Navigator) session(chatID int64) *session {
+	n.sessionsMu.Lock()
+	defer n.sessionsMu.Unlock()
 	s := n.sessions[chatID]
 	if s == nil {
 		s = &session{}
+		n.sessions[chatID] = s
 	}
+	return s
+}
+
+func (n *Navigator) Show(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, page Page) error {
+	if chatID <= 0 {
+		_, err := render(ctx, b, chatID, page, page.Keyboard)
+		return err
+	}
+	if page.Admin && !slices.Contains(n.adminIDs, chatID) {
+		return errors.New("admin page access denied")
+	}
+	s := n.session(chatID)
 	history := slices.Clone(s.history)
 	if page.Root {
 		history = []Page{page}
@@ -104,15 +96,11 @@ func Show(ctx context.Context, b *bot.Bot, chatID int64, page Page) error {
 			history = append(history[:1:1], history[len(history)-9:]...)
 		}
 	}
-	if err := n.display(ctx, b, chatID, s, page, history, r.update); err != nil {
-		return err
-	}
-	n.sessions[chatID] = s
-	return nil
+	return n.display(ctx, b, chatID, s, page, history, update)
 }
 
 func recordPage(history []Page, page Page) []Page {
-	switch page.History {
+	switch page.HistoryMode {
 	case HistoryPush:
 		return append(history, page)
 	case HistoryMatchCurrent:
@@ -144,15 +132,12 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	s := n.sessions[message.Chat.ID]
+	s := n.session(message.Chat.ID)
 
 	parts := strings.Split(q.Data, ":")
 	answer := ""
 
-	if s == nil || len(s.history) == 0 {
+	if len(s.history) == 0 {
 		answer = "История истекла. Открываю главное меню."
 	} else if len(parts) != 3 || parts[1] != s.token {
 		answer = "Эта кнопка устарела."
@@ -164,7 +149,7 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 		slog.ErrorContext(ctx, "answer navigation callback failed", "error", err)
 	}
 
-	if (s == nil || len(s.history) == 0) && n.home != nil {
+	if len(s.history) == 0 && n.home != nil {
 		page := n.home(q.From.ID)
 		if page.Admin && !slices.Contains(n.adminIDs, q.From.ID) {
 			return
@@ -172,11 +157,8 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 		if n.cleanup != nil {
 			n.cleanup(q.From.ID)
 		}
-		s = &session{}
 		if err := n.display(ctx, b, message.Chat.ID, s, page, []Page{page}, update); err != nil {
 			slog.ErrorContext(ctx, "open navigation home failed", "error", err)
-		} else {
-			n.sessions[message.Chat.ID] = s
 		}
 		return
 	}
