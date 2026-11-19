@@ -70,8 +70,6 @@ func runTelegram(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) er
 	userList := adminusers.NewService(machine, userRepository, cfg.AdminTelegramIDs)
 	announcementsService := announcements.NewService(ctx, machine, userRepository)
 
-	defer announcementsService.Close()
-
 	registrations := repositories.NewEventRegistrationRepository(pool)
 	browser, err := userevents.NewService(machine, eventRepository, tagRepository, registrations)
 
