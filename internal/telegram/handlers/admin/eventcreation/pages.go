@@ -9,6 +9,7 @@ import (
 
 	"utmn-events-bot/internal/fsm"
 	adminmenu "utmn-events-bot/internal/telegram/handlers/admin/menu"
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
@@ -60,6 +61,7 @@ func (f *Handler) getPage(userID int64, result creationResult) navigation.Page {
 	}
 
 	page := f.prompt(result.state, result.draft)
+	page.Keyboard = keyboards.WithScreenToken(page.Keyboard, result.draft.Token)
 	page.Key = "admin:event:" + string(result.state)
 	page.Admin = true
 	if message != "" {
@@ -69,8 +71,8 @@ func (f *Handler) getPage(userID int64, result creationResult) navigation.Page {
 
 	state, saved := result.state, cloneDraft(result.draft)
 	page.Restore = func(context.Context) (navigation.Page, error) {
-		f.service.restore(userID, state, saved)
-		return f.getPage(userID, creationResult{state: state, draft: saved}), nil
+		restored := f.service.replaceDraft(userID, state, saved)
+		return f.getPage(userID, creationResult{state: state, draft: restored}), nil
 	}
 	return page
 }

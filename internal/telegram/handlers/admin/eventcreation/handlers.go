@@ -5,11 +5,12 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	"utmn-events-bot/internal/fsm"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
+	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
@@ -35,16 +36,12 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *EventCreatio
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventEnd, update) }, handler.End, guard)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventCapacity, update) }, handler.Capacity, guard)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchMessageState(eventTags, update) }, handler.Tags, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		return handler.matchCallbackState(eventDescription, "skip_description", update)
-	}, handler.SkipDescription, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchCallbackState(eventPhoto, "skip_photo", update) }, handler.SkipPhoto, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		return handler.matchCallbackState(eventCapacity, "unlimited_capacity", update)
-	}, handler.UnlimitedCapacity, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchCallbackState(eventTags, "skip_tags", update) }, handler.SkipTags, guard)
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return handler.matchCallbackState(eventPreview, "save", update) }, handler.Save, guard)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:event:cancel", bot.MatchTypeExact, handler.Cancel, guard)
+	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:skip_description"), handler.SkipDescription, guard)
+	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:skip_photo"), handler.SkipPhoto, guard)
+	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:unlimited_capacity"), handler.UnlimitedCapacity, guard)
+	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:skip_tags"), handler.SkipTags, guard)
+	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:save"), handler.Save, guard)
+	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:cancel"), handler.Cancel, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:event:", bot.MatchTypePrefix, handler.StaleCallback, guard)
 }
 
@@ -153,7 +150,8 @@ func (f *Handler) SkipDescription(ctx context.Context, b *bot.Bot, update *model
 	if query.Message.Message == nil {
 		return
 	}
-	result := f.service.skipDescription(query.From.ID)
+	_, token, _ := keyboards.ParseScreenCallback(query.Data)
+	result := f.service.skipDescription(query.From.ID, token)
 	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
@@ -166,7 +164,8 @@ func (f *Handler) SkipPhoto(ctx context.Context, b *bot.Bot, update *models.Upda
 	if query.Message.Message == nil {
 		return
 	}
-	result := f.service.skipPhoto(query.From.ID)
+	_, token, _ := keyboards.ParseScreenCallback(query.Data)
+	result := f.service.skipPhoto(query.From.ID, token)
 	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
@@ -179,7 +178,8 @@ func (f *Handler) UnlimitedCapacity(ctx context.Context, b *bot.Bot, update *mod
 	if query.Message.Message == nil {
 		return
 	}
-	result := f.service.unlimitedCapacity(query.From.ID)
+	_, token, _ := keyboards.ParseScreenCallback(query.Data)
+	result := f.service.unlimitedCapacity(query.From.ID, token)
 	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
@@ -192,7 +192,8 @@ func (f *Handler) SkipTags(ctx context.Context, b *bot.Bot, update *models.Updat
 	if query.Message.Message == nil {
 		return
 	}
-	result := f.service.skipTags(query.From.ID)
+	_, token, _ := keyboards.ParseScreenCallback(query.Data)
+	result := f.service.skipTags(query.From.ID, token)
 	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
@@ -206,7 +207,8 @@ func (f *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	result, err := f.service.confirmEvent(dbCtx, query.From.ID)
+	_, token, _ := keyboards.ParseScreenCallback(query.Data)
+	result, err := f.service.confirmEvent(dbCtx, query.From.ID, token)
 	cancel()
 	if err != nil {
 		slog.ErrorContext(ctx, "event save failed", "user_id", query.From.ID, "error", err)
@@ -223,7 +225,8 @@ func (f *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 	if query.Message.Message == nil {
 		return
 	}
-	result := f.service.cancelForm(query.From.ID)
+	_, token, _ := keyboards.ParseScreenCallback(query.Data)
+	result := f.service.cancelForm(query.From.ID, token)
 	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
@@ -250,11 +253,6 @@ func (f *Handler) matchMessageState(step fsm.StateID, update *models.Update) boo
 		return false
 	}
 	return f.service.inState(m.From.ID, step)
-}
-
-func (f *Handler) matchCallbackState(step fsm.StateID, action string, update *models.Update) bool {
-	q := update.CallbackQuery
-	return q != nil && q.Data == "admin:event:"+action && f.service.inState(q.From.ID, step)
 }
 
 func answerEventCallback(ctx context.Context, b *bot.Bot, id string) {

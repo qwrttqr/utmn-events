@@ -11,7 +11,7 @@ import (
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
-func (h *Handler) page(userID int64, result tagResult, state fsm.StateID, snapshot *session) navigation.Page {
+func (h *Handler) getPage(userID int64, result tagResult, state fsm.StateID, snapshot *session) navigation.Page {
 	page := tagContent(result)
 	page.Key = "admin:tags:result"
 	page.Admin = true
@@ -31,7 +31,7 @@ func (h *Handler) page(userID int64, result tagResult, state fsm.StateID, snapsh
 		if err != nil {
 			return navigation.Page{}, err
 		}
-		return h.page(userID, restored, restored.state, &restored.session), nil
+		return h.getPage(userID, restored, restored.state, &restored.session), nil
 	}
 	return page
 }

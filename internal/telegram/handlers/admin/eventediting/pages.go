@@ -12,7 +12,7 @@ import (
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
-func (f *Handler) page(userID int64, result editingResult) navigation.Page {
+func (f *Handler) getPage(userID int64, result editingResult) navigation.Page {
 	var message string
 	history := navigation.HistoryMatchCurrent
 	switch result.status {
@@ -75,7 +75,7 @@ func (f *Handler) page(userID int64, result editingResult) navigation.Page {
 	state, saved := result.state, cloneDraft(result.draft)
 	page.Restore = func(context.Context) (navigation.Page, error) {
 		f.service.restore(userID, state, saved)
-		return f.page(userID, editingResult{state: state, draft: saved}), nil
+		return f.getPage(userID, editingResult{state: state, draft: saved}), nil
 	}
 	return page
 }

@@ -15,7 +15,7 @@ func expiredPage() navigation.Page {
 	}
 }
 
-func (h *Handler) page(userID int64, result listResult) navigation.Page {
+func (h *Handler) getPage(userID int64, result listResult) navigation.Page {
 	if result.expired {
 		return expiredPage()
 	}
@@ -34,7 +34,7 @@ func (h *Handler) page(userID int64, result listResult) navigation.Page {
 			if err != nil {
 				return navigation.Page{}, err
 			}
-			return h.page(userID, restored), nil
+			return h.getPage(userID, restored), nil
 		}}
 	return page
 }

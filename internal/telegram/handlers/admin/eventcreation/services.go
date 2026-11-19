@@ -2,6 +2,7 @@ package eventcreation
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"utmn-events-bot/internal/domain"
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 )
 
 const (
@@ -32,6 +34,7 @@ const eventDateLayout = "02.01.2006 15:04"
 type eventDraft struct {
 	event           domain.Event
 	returnToPreview bool
+	keyboards.TokenizedDraft
 }
 
 type creationStatus uint8
@@ -83,8 +86,7 @@ func NewService(machine *fsm.FSM, repository Repository) (*EventCreationService,
 }
 
 func (f *EventCreationService) begin(userID int64) creationResult {
-	d := eventDraft{}
-	f.machine.Replace(userID, eventTitle, d)
+	d := f.replaceDraft(userID, eventTitle, eventDraft{})
 	return creationResult{state: eventTitle, draft: d, status: stepStarted}
 }
 
@@ -120,14 +122,17 @@ func (f *EventCreationService) completeStep(userID int64, state fsm.StateID, d e
 	if previous == eventEnd && d.returnToPreview {
 		state, d.returnToPreview = eventPreview, false
 	}
-	f.machine.Replace(userID, state, d)
+	d = f.replaceDraft(userID, state, d)
 	return creationResult{state: state, draft: d, status: stepStarted}
 }
 
-func (f *EventCreationService) cancelForm(userID int64) creationResult {
-	_, _, exists := fsm.GetDraft[eventDraft](f.machine, userID)
+func (f *EventCreationService) cancelForm(userID int64, token string) creationResult {
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
+	}
+	if !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, status: staleAction}
 	}
 
 	f.machine.Clear(userID)
@@ -174,13 +179,13 @@ func (f *EventCreationService) setDescription(userID int64, text string) creatio
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) skipDescription(userID int64) creationResult {
+func (f *EventCreationService) skipDescription(userID int64, token string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
-	if state != eventDescription {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+	if state != eventDescription || !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, status: staleAction}
 	}
 
 	d.event.Description = ""
@@ -203,13 +208,13 @@ func (f *EventCreationService) setPhoto(userID int64, photo string) creationResu
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) skipPhoto(userID int64) creationResult {
+func (f *EventCreationService) skipPhoto(userID int64, token string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
-	if state != eventPhoto {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+	if state != eventPhoto || !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, status: staleAction}
 	}
 
 	d.event.PhotoFileID = ""
@@ -306,13 +311,13 @@ func (f *EventCreationService) setCapacity(userID int64, text string) creationRe
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) unlimitedCapacity(userID int64) creationResult {
+func (f *EventCreationService) unlimitedCapacity(userID int64, token string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
-	if state != eventCapacity {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+	if state != eventCapacity || !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, status: staleAction}
 	}
 
 	d.event.Capacity = nil
@@ -355,26 +360,26 @@ func (f *EventCreationService) setTags(userID int64, text string) creationResult
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) skipTags(userID int64) creationResult {
+func (f *EventCreationService) skipTags(userID int64, token string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
-	if state != eventTags {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+	if state != eventTags || !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, status: staleAction}
 	}
 
 	d.event.Tags = nil
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventCreationService) confirmEvent(ctx context.Context, userID int64) (creationResult, error) {
+func (f *EventCreationService) confirmEvent(ctx context.Context, userID int64, token string) (creationResult, error) {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}, nil
 	}
-	if state != eventPreview {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}, nil
+	if state != eventPreview || !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, status: staleAction}, nil
 	}
 
 	if !d.event.StartsAt.After(f.now()) {
@@ -395,7 +400,7 @@ func (f *EventCreationService) confirmEvent(ctx context.Context, userID int64) (
 func (f *EventCreationService) reenterDates(userID int64, d eventDraft) creationResult {
 	state := eventStart
 	d.returnToPreview = true
-	f.machine.Replace(userID, state, d)
+	d = f.replaceDraft(userID, state, d)
 	return creationResult{state: state, draft: d, status: startExpired}
 }
 
@@ -403,8 +408,10 @@ func (f *EventCreationService) inState(userID int64, step fsm.StateID) bool {
 	return f.machine.CurrentState(userID) == step
 }
 
-func (f *EventCreationService) restore(userID int64, state fsm.StateID, saved eventDraft) {
-	f.machine.Replace(userID, state, cloneDraft(saved))
+func (f *EventCreationService) replaceDraft(userID int64, state fsm.StateID, d eventDraft) eventDraft {
+	d.SetScreenToken(rand.Text())
+	f.machine.Replace(userID, state, d)
+	return d
 }
 
 func (f *EventCreationService) staleCallback(userID int64) creationResult {

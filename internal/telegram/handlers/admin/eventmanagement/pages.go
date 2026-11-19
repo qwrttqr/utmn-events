@@ -14,7 +14,7 @@ func expiredPage() navigation.Page {
 	return navigation.Page{Key: "admin:events:expired", Text: "Эта кнопка устарела. Откройте список мероприятий.", Admin: true, Keyboard: listKeyboard()}
 }
 
-func (h *Handler) page(userID int64, result managementResult) navigation.Page {
+func (h *Handler) getPage(userID int64, result managementResult) navigation.Page {
 	switch result.status {
 	case managementExpired:
 		return expiredPage()
@@ -68,7 +68,7 @@ func (h *Handler) page(userID int64, result managementResult) navigation.Page {
 		if err != nil {
 			return navigation.Page{}, err
 		}
-		return h.page(userID, restored), nil
+		return h.getPage(userID, restored), nil
 	}
 	return page
 }

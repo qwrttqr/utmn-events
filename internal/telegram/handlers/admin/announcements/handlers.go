@@ -55,7 +55,7 @@ func (h *Handler) Begin(ctx context.Context, b *bot.Bot, update *models.Update) 
 	if q.Message.Message == nil {
 		return
 	}
-	view := resultPage(h.service.begin(q.From.ID))
+	view := getPage(h.service.begin(q.From.ID))
 	h.show(ctx, b, update, q.Message.Message.Chat.ID, view)
 }
 
@@ -64,7 +64,7 @@ func (h *Handler) Text(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if m == nil || m.From == nil {
 		return
 	}
-	view := resultPage(h.service.setText(m.From.ID, m.Text))
+	view := getPage(h.service.setText(m.From.ID, m.Text))
 	h.show(ctx, b, update, m.Chat.ID, view)
 }
 
@@ -78,7 +78,7 @@ func (h *Handler) Edit(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 	_, token, _ := keyboards.ParseScreenCallback(q.Data)
-	view := resultPage(h.service.edit(q.From.ID, token))
+	view := getPage(h.service.edit(q.From.ID, token))
 	h.show(ctx, b, update, q.Message.Message.Chat.ID, view)
 }
 
@@ -98,7 +98,7 @@ func (h *Handler) Send(ctx context.Context, b *bot.Bot, update *models.Update) {
 		h.show(ctx, b, update, q.Message.Message.Chat.ID, announcementPage("Не удалось начать рассылку объявления.", announcementKeyboard(fsm.Idle), false))
 		return
 	}
-	h.show(ctx, b, update, q.Message.Message.Chat.ID, resultPage(result))
+	h.show(ctx, b, update, q.Message.Message.Chat.ID, getPage(result))
 	if job == nil {
 		return
 	}
@@ -121,7 +121,7 @@ func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 		return
 	}
 	_, token, _ := keyboards.ParseScreenCallback(q.Data)
-	view := resultPage(h.service.cancelDraft(q.From.ID, token))
+	view := getPage(h.service.cancelDraft(q.From.ID, token))
 	h.show(ctx, b, update, q.Message.Message.Chat.ID, view)
 }
 

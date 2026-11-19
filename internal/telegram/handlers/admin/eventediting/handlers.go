@@ -257,7 +257,7 @@ func answerEventCallback(ctx context.Context, b *bot.Bot, id string) {
 }
 
 func (f *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, userID, chatID int64, result editingResult) {
-	if err := f.navigator.Show(ctx, b, update, chatID, f.page(userID, result)); err != nil {
+	if err := f.navigator.Show(ctx, b, update, chatID, f.getPage(userID, result)); err != nil {
 		slog.ErrorContext(ctx, "show event screen failed", "error", err)
 	}
 }

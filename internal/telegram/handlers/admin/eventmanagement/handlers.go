@@ -49,7 +49,7 @@ func (h *Handler) handleCallback(ctx context.Context, b *bot.Bot, update *models
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	result, edit, err := h.service.process(dbCtx, q.From.ID, q.Data)
 	cancel()
-	page := h.page(q.From.ID, result)
+	page := h.getPage(q.From.ID, result)
 	if errors.Is(err, domain.ErrEventNotFound) {
 		h.service.Cancel(q.From.ID)
 		page = navigation.Page{Key: "admin:events:missing", Text: "Мероприятие уже удалено.", Admin: true, ClearHistory: true, Keyboard: listKeyboard()}

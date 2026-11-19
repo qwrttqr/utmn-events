@@ -287,7 +287,7 @@ func (h *Handler) Name(ctx context.Context, b *bot.Bot, update *models.Update) {
 }
 func (h *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, userID, chatID int64, result tagResult) {
 	state, snapshot := h.service.snapshot(userID)
-	if err := h.navigator.Show(ctx, b, update, chatID, h.page(userID, result, state, snapshot)); err != nil {
+	if err := h.navigator.Show(ctx, b, update, chatID, h.getPage(userID, result, state, snapshot)); err != nil {
 		slog.ErrorContext(ctx, "show tags failed", "error", err)
 	}
 }

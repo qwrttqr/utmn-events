@@ -165,7 +165,7 @@ func (h *Handler) Page(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 func (h *Handler) showList(ctx context.Context, b *bot.Bot, update *models.Update, result listResult, err error, notice, retry string) {
 	q := update.CallbackQuery
-	page := h.page(q.From.ID, result)
+	page := h.getPage(q.From.ID, result)
 	if err != nil {
 		slog.ErrorContext(ctx, "users action failed", "user_id", q.From.ID, "error", err)
 		page = navigation.Page{Key: "admin:users:error", Text: "Не удалось загрузить пользователей.", Admin: true, Keyboard: retryKeyboard(retry)}

@@ -11,7 +11,7 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
-func resultPage(result announcementResult) navigation.Page {
+func getPage(result announcementResult) navigation.Page {
 	switch result.status {
 	case announcementCancelled:
 		return adminmenu.GetMainPage()
