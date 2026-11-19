@@ -140,7 +140,7 @@ func (f *EventsService) process(ctx context.Context, userID int64, callback stri
 }
 
 func (f *EventsService) page(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 	s = cloneSession(s)
 
 	eventID, action, valid := parseCallback(callback)
@@ -160,7 +160,7 @@ func (f *EventsService) page(ctx context.Context, userID int64, callback string)
 }
 
 func (f *EventsService) open(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 	s = cloneSession(s)
 
 	eventID, action, valid := parseCallback(callback)
@@ -180,7 +180,7 @@ func (f *EventsService) open(ctx context.Context, userID int64, callback string)
 }
 
 func (f *EventsService) toggleTag(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 	s = cloneSession(s)
 
 	eventID, action, valid := parseCallback(callback)
@@ -210,7 +210,7 @@ func (f *EventsService) toggleTag(ctx context.Context, userID int64, callback st
 }
 
 func (f *EventsService) clearTags(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 	s = cloneSession(s)
 
 	eventID, action, valid := parseCallback(callback)
@@ -229,7 +229,7 @@ func (f *EventsService) clearTags(ctx context.Context, userID int64, callback st
 }
 
 func (f *EventsService) search(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 	s = cloneSession(s)
 	var notice eventsStatus
 
@@ -254,7 +254,7 @@ func (f *EventsService) search(ctx context.Context, userID int64, callback strin
 }
 
 func (f *EventsService) enroll(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 	s = cloneSession(s)
 	var notice eventsStatus
 
@@ -285,7 +285,7 @@ func (f *EventsService) enroll(ctx context.Context, userID int64, callback strin
 }
 
 func (f *EventsService) cancelEnrollment(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 	s = cloneSession(s)
 
 	eventID, action, valid := parseCallback(callback)
@@ -304,7 +304,7 @@ func (f *EventsService) cancelEnrollment(ctx context.Context, userID int64, call
 }
 
 func (f *EventsService) keepEnrollment(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 	s = cloneSession(s)
 
 	eventID, action, valid := parseCallback(callback)
@@ -323,7 +323,7 @@ func (f *EventsService) keepEnrollment(ctx context.Context, userID int64, callba
 }
 
 func (f *EventsService) confirmCancellation(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
 	if !exists || !valid || eventID == 0 || eventID != s.eventID || action != "confirm" || state != cancelEnrollment {

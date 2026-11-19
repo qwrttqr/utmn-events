@@ -125,7 +125,7 @@ func (f *EventCreationService) completeStep(userID int64, state fsm.StateID, d e
 }
 
 func (f *EventCreationService) cancelForm(userID int64) creationResult {
-	_, _, exists := fsm.Load[eventDraft](f.machine, userID)
+	_, _, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -135,7 +135,7 @@ func (f *EventCreationService) cancelForm(userID int64) creationResult {
 }
 
 func (f *EventCreationService) setTitle(userID int64, text string) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -155,7 +155,7 @@ func (f *EventCreationService) setTitle(userID int64, text string) creationResul
 }
 
 func (f *EventCreationService) setDescription(userID int64, text string) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -175,7 +175,7 @@ func (f *EventCreationService) setDescription(userID int64, text string) creatio
 }
 
 func (f *EventCreationService) skipDescription(userID int64) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -188,7 +188,7 @@ func (f *EventCreationService) skipDescription(userID int64) creationResult {
 }
 
 func (f *EventCreationService) setPhoto(userID int64, photo string) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -204,7 +204,7 @@ func (f *EventCreationService) setPhoto(userID int64, photo string) creationResu
 }
 
 func (f *EventCreationService) skipPhoto(userID int64) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -217,7 +217,7 @@ func (f *EventCreationService) skipPhoto(userID int64) creationResult {
 }
 
 func (f *EventCreationService) setLocation(userID int64, text string) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -237,7 +237,7 @@ func (f *EventCreationService) setLocation(userID int64, text string) creationRe
 }
 
 func (f *EventCreationService) setStart(userID int64, text string) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -261,7 +261,7 @@ func (f *EventCreationService) setStart(userID int64, text string) creationResul
 }
 
 func (f *EventCreationService) setEnd(userID int64, text string) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -285,7 +285,7 @@ func (f *EventCreationService) setEnd(userID int64, text string) creationResult 
 }
 
 func (f *EventCreationService) setCapacity(userID int64, text string) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -307,7 +307,7 @@ func (f *EventCreationService) setCapacity(userID int64, text string) creationRe
 }
 
 func (f *EventCreationService) unlimitedCapacity(userID int64) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -320,7 +320,7 @@ func (f *EventCreationService) unlimitedCapacity(userID int64) creationResult {
 }
 
 func (f *EventCreationService) setTags(userID int64, text string) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -356,7 +356,7 @@ func (f *EventCreationService) setTags(userID int64, text string) creationResult
 }
 
 func (f *EventCreationService) skipTags(userID int64) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}
@@ -369,7 +369,7 @@ func (f *EventCreationService) skipTags(userID int64) creationResult {
 }
 
 func (f *EventCreationService) confirmEvent(ctx context.Context, userID int64) (creationResult, error) {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}, nil
 	}
@@ -408,7 +408,7 @@ func (f *EventCreationService) restore(userID int64, state fsm.StateID, saved ev
 }
 
 func (f *EventCreationService) staleCallback(userID int64) creationResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return creationResult{status: noActiveDraft}
 	}

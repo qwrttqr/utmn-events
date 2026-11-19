@@ -57,7 +57,7 @@ func (s *Service) Cancel(userID int64) {
 }
 
 func (s *Service) hasDraft(userID int64) bool {
-	_, _, exists := fsm.Load[draft](s.machine, userID)
+	_, _, exists := fsm.GetDraft[draft](s.machine, userID)
 	return exists
 }
 
@@ -71,7 +71,7 @@ func (s *Service) begin(userID int64, username string) {
 }
 
 func (s *Service) setFirstName(userID int64, text string) registrationResult {
-	state, d, exists := fsm.Load[draft](s.machine, userID)
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 
 	if !exists {
 		return registrationResult{status: registrationMissing}
@@ -93,7 +93,7 @@ func (s *Service) setFirstName(userID int64, text string) registrationResult {
 }
 
 func (s *Service) setLastName(userID int64, text string) registrationResult {
-	state, d, exists := fsm.Load[draft](s.machine, userID)
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 
 	if !exists {
 		return registrationResult{status: registrationMissing}
@@ -115,7 +115,7 @@ func (s *Service) setLastName(userID int64, text string) registrationResult {
 }
 
 func (s *Service) setSurname(userID int64, text string) registrationResult {
-	state, d, exists := fsm.Load[draft](s.machine, userID)
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}
 	}
@@ -132,7 +132,7 @@ func (s *Service) setSurname(userID int64, text string) registrationResult {
 }
 
 func (s *Service) skipSurname(userID int64) registrationResult {
-	state, d, exists := fsm.Load[draft](s.machine, userID)
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}
 	}
@@ -145,7 +145,7 @@ func (s *Service) skipSurname(userID int64) registrationResult {
 }
 
 func (s *Service) confirm(ctx context.Context, userID int64, username string) (registrationResult, error) {
-	state, d, exists := fsm.Load[draft](s.machine, userID)
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 	if !exists {
 		return registrationResult{status: registrationMissing}, nil
 	}
@@ -161,7 +161,7 @@ func (s *Service) confirm(ctx context.Context, userID int64, username string) (r
 }
 
 func (s *Service) preview(userID int64, username string) registrationResult {
-	state, d, exists := fsm.Load[draft](s.machine, userID)
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 	if !exists {
 		state = firstName
 		d = draft{profile: domain.User{TelegramID: userID, Username: username, Role: "user"}}

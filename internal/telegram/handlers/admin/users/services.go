@@ -39,7 +39,7 @@ func NewService(machine *fsm.FSM, repo Repository, adminIDs []int64) *UsersServi
 }
 
 func (f *UsersService) page(ctx context.Context, userID int64, action string) (listResult, error) {
-	state, current, exists := fsm.Load[listResult](f.machine, userID)
+	state, current, exists := fsm.GetDraft[listResult](f.machine, userID)
 	if !exists || state != usersList {
 		return listResult{expired: true}, nil
 	}
@@ -64,7 +64,7 @@ func (f *UsersService) loadPage(ctx context.Context, userID int64, pageNumber in
 }
 
 func (f *UsersService) selectUser(ctx context.Context, userID, targetID int64) (userSelection, error) {
-	state, current, exists := fsm.Load[listResult](f.machine, userID)
+	state, current, exists := fsm.GetDraft[listResult](f.machine, userID)
 	if !exists || state != usersList {
 		return userSelection{}, nil
 	}
@@ -87,7 +87,7 @@ func (f *UsersService) loadUser(ctx context.Context, userID, targetID int64, pag
 }
 
 func (f *UsersService) selection(userID int64, token string, expected fsm.StateID) (userSelection, bool) {
-	state, selected, exists := fsm.Load[userSelection](f.machine, userID)
+	state, selected, exists := fsm.GetDraft[userSelection](f.machine, userID)
 	return selected, exists && state == expected && selected.token == token
 }
 

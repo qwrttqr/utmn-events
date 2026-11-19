@@ -22,7 +22,7 @@ func Register(
 	tagsService *tags.TagsService,
 	managementService *eventmanagement.EventManagementService,
 	usersService *adminusers.UsersService,
-	announcementsService *announcements.AnnouncementsService,
+	announcementsService *announcements.Service,
 	eventEditingService *eventediting.EventEditingService,
 	finish func(int64),
 ) {

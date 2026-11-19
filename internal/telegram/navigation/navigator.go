@@ -40,7 +40,6 @@ type Page struct {
 type session struct {
 	history  []Page
 	messages []int
-	token    string
 	text     string
 	keyboard *models.InlineKeyboardMarkup
 }
@@ -78,7 +77,7 @@ func (n *Navigator) ShowHome(ctx context.Context, b *bot.Bot, update *models.Upd
 	if n.home == nil {
 		return errors.New("home page is not configured")
 	}
-	isAdmin := isSenderChat(update, chatID) && n.isAdmin(ctx, chatID)
+	isAdmin := n.isAdmin(ctx, chatID)
 	home := n.home(isAdmin)
 	if home.Admin && !isAdmin {
 		return errors.New("admin page access denied")
@@ -87,7 +86,7 @@ func (n *Navigator) ShowHome(ctx context.Context, b *bot.Bot, update *models.Upd
 }
 
 func (n *Navigator) Show(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, page Page) error {
-	isAdmin := page.Admin && isSenderChat(update, chatID) && n.isAdmin(ctx, chatID)
+	isAdmin := page.Admin && n.isAdmin(ctx, chatID)
 	if page.Admin && !isAdmin {
 		return errors.New("admin page access denied")
 	}
@@ -109,7 +108,7 @@ func (n *Navigator) show(ctx context.Context, b *bot.Bot, update *models.Update,
 		}
 		if len(history) == 0 && n.home != nil {
 			if !page.Admin {
-				isAdmin = isSenderChat(update, chatID) && n.isAdmin(ctx, chatID)
+				isAdmin = n.isAdmin(ctx, chatID)
 			}
 			history = append(history, n.home(isAdmin))
 		}
@@ -119,18 +118,6 @@ func (n *Navigator) show(ctx context.Context, b *bot.Bot, update *models.Update,
 		}
 	}
 	return n.display(ctx, b, chatID, s, page, history, update)
-}
-
-func isSenderChat(update *models.Update, chatID int64) bool {
-	if update == nil {
-		return false
-	}
-	if q := update.CallbackQuery; q != nil {
-		m := q.Message.Message
-		return m != nil && m.Chat.Type == models.ChatTypePrivate && m.Chat.ID == chatID && q.From.ID == chatID
-	}
-	m := update.Message
-	return m != nil && m.From != nil && m.Chat.Type == models.ChatTypePrivate && m.Chat.ID == chatID && m.From.ID == chatID
 }
 
 func recordPage(history []Page, page Page) []Page {
@@ -174,8 +161,6 @@ func (n *Navigator) handle(ctx context.Context, b *bot.Bot, update *models.Updat
 
 	if len(s.history) == 0 {
 		answer = "История истекла. Открываю главное меню."
-	} else if len(parts) != 3 || parts[1] != s.token {
-		answer = "Эта кнопка устарела."
 	} else if s.history[len(s.history)-1].Admin && !isAdmin {
 		answer = "Только для администратора."
 	}
@@ -294,7 +279,7 @@ func (n *Navigator) display(ctx context.Context, b *bot.Bot, chatID int64, s *se
 			erase(ctx, b, chatID, id)
 		}
 	}
-	s.history, s.messages, s.token, s.text, s.keyboard = history, ids, token, text, markup
+	s.history, s.messages, s.text, s.keyboard = history, ids, text, markup
 	if update != nil && update.Message != nil && update.Message.Chat.ID == chatID {
 		erase(ctx, b, chatID, update.Message.ID)
 	}

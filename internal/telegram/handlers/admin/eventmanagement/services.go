@@ -123,7 +123,7 @@ func (f *EventManagementService) process(ctx context.Context, userID int64, call
 }
 
 func (f *EventManagementService) page(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
 	listPage := state == list && eventID == 0
@@ -140,7 +140,7 @@ func (f *EventManagementService) page(ctx context.Context, userID int64, callbac
 }
 
 func (f *EventManagementService) open(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
 	if !exists || !valid || state != list || action != "open" || eventID == 0 {
@@ -153,7 +153,7 @@ func (f *EventManagementService) open(ctx context.Context, userID int64, callbac
 }
 
 func (f *EventManagementService) edit(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
 	if !exists || !valid || state != card || action != "edit" || eventID <= 0 || eventID != s.eventID {
@@ -166,7 +166,7 @@ func (f *EventManagementService) edit(ctx context.Context, userID int64, callbac
 }
 
 func (f *EventManagementService) participants(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
 	if !exists || !valid || state != card || action != "participants" || eventID <= 0 || eventID != s.eventID {
@@ -179,7 +179,7 @@ func (f *EventManagementService) participants(ctx context.Context, userID int64,
 }
 
 func (f *EventManagementService) field(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
 	if !exists || !valid || state != fields || !strings.HasPrefix(action, "field") || eventID <= 0 || eventID != s.eventID {
@@ -198,7 +198,7 @@ func (f *EventManagementService) field(ctx context.Context, userID int64, callba
 }
 
 func (f *EventManagementService) delete(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
 	if !exists || !valid || state != card || action != "delete" || eventID <= 0 || eventID != s.eventID {
@@ -211,7 +211,7 @@ func (f *EventManagementService) delete(ctx context.Context, userID int64, callb
 }
 
 func (f *EventManagementService) keep(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
 	if !exists || !valid || state != confirmDelete || action != "keep" || eventID <= 0 || eventID != s.eventID {
@@ -224,7 +224,7 @@ func (f *EventManagementService) keep(ctx context.Context, userID int64, callbac
 }
 
 func (f *EventManagementService) confirmDelete(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 
 	eventID, action, valid := parseCallback(callback)
 	if !exists || !valid || state != confirmDelete || action != "confirm" || eventID <= 0 || eventID != s.eventID {

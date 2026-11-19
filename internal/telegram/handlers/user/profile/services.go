@@ -77,7 +77,7 @@ func (s *ProfileService) begin(ctx context.Context, userID int64) (profileResult
 }
 
 func (s *ProfileService) editFirstName(userID int64) profileResult {
-	state, d, exists := fsm.Load[session](s.machine, userID)
+	state, d, exists := fsm.GetDraft[session](s.machine, userID)
 	if !exists || state != profileView {
 		return profileResult{status: profileStale}
 	}
@@ -86,7 +86,7 @@ func (s *ProfileService) editFirstName(userID int64) profileResult {
 	return profileResult{state: state, session: d}
 }
 func (s *ProfileService) setFirstName(userID int64, text string) profileResult {
-	state, d, exists := fsm.Load[session](s.machine, userID)
+	state, d, exists := fsm.GetDraft[session](s.machine, userID)
 	if !exists || state != profileFirstName {
 		return profileResult{status: profileStale}
 	}
@@ -100,7 +100,7 @@ func (s *ProfileService) setFirstName(userID int64, text string) profileResult {
 }
 
 func (s *ProfileService) editLastName(userID int64) profileResult {
-	state, d, exists := fsm.Load[session](s.machine, userID)
+	state, d, exists := fsm.GetDraft[session](s.machine, userID)
 	if !exists || state != profileView {
 		return profileResult{status: profileStale}
 	}
@@ -109,7 +109,7 @@ func (s *ProfileService) editLastName(userID int64) profileResult {
 	return profileResult{state: state, session: d}
 }
 func (s *ProfileService) setLastName(userID int64, text string) profileResult {
-	state, d, exists := fsm.Load[session](s.machine, userID)
+	state, d, exists := fsm.GetDraft[session](s.machine, userID)
 	if !exists || state != profileLastName {
 		return profileResult{status: profileStale}
 	}
@@ -123,7 +123,7 @@ func (s *ProfileService) setLastName(userID int64, text string) profileResult {
 }
 
 func (s *ProfileService) editSurname(userID int64) profileResult {
-	state, d, exists := fsm.Load[session](s.machine, userID)
+	state, d, exists := fsm.GetDraft[session](s.machine, userID)
 	if !exists || state != profileView {
 		return profileResult{status: profileStale}
 	}
@@ -132,7 +132,7 @@ func (s *ProfileService) editSurname(userID int64) profileResult {
 	return profileResult{state: state, session: d}
 }
 func (s *ProfileService) setSurname(userID int64, text string) profileResult {
-	state, d, exists := fsm.Load[session](s.machine, userID)
+	state, d, exists := fsm.GetDraft[session](s.machine, userID)
 	if !exists || state != profileSurname {
 		return profileResult{status: profileStale}
 	}
@@ -146,7 +146,7 @@ func (s *ProfileService) setSurname(userID int64, text string) profileResult {
 }
 
 func (s *ProfileService) clearSurname(userID int64) profileResult {
-	state, d, exists := fsm.Load[session](s.machine, userID)
+	state, d, exists := fsm.GetDraft[session](s.machine, userID)
 	if !exists || state != profileSurname {
 		return profileResult{status: profileStale}
 	}
@@ -155,7 +155,7 @@ func (s *ProfileService) clearSurname(userID int64) profileResult {
 	return profileResult{state: state, session: d}
 }
 func (s *ProfileService) confirm(ctx context.Context, userID int64) (profileResult, error) {
-	state, d, exists := fsm.Load[session](s.machine, userID)
+	state, d, exists := fsm.GetDraft[session](s.machine, userID)
 	if !exists || state != profilePreview {
 		return profileResult{status: profileStale}, nil
 	}
@@ -183,7 +183,7 @@ func (s *ProfileService) confirm(ctx context.Context, userID int64) (profileResu
 }
 
 func (s *ProfileService) cancelEdit(userID int64) profileResult {
-	state, _, exists := fsm.Load[session](s.machine, userID)
+	state, _, exists := fsm.GetDraft[session](s.machine, userID)
 	if !exists || state == profileView {
 		return profileResult{status: profileStale}
 	}

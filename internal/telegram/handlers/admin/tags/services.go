@@ -76,7 +76,7 @@ func NewService(machine *fsm.FSM, repo Repository, events EventRepository) *Tags
 }
 
 func (f *TagsService) enteringName(id int64) bool {
-	state, _, exists := fsm.Load[session](f.machine, id)
+	state, _, exists := fsm.GetDraft[session](f.machine, id)
 	return exists && state == createName
 }
 
@@ -91,7 +91,7 @@ func (f *TagsService) begin(ctx context.Context, id int64) (tagResult, error) {
 }
 
 func (f *TagsService) create(ctx context.Context, id int64, callback string) (tagResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, id)
+	state, s, exists := fsm.GetDraft[session](f.machine, id)
 	if !exists {
 		return tagResult{status: tagSessionMissing}, nil
 	}
@@ -122,7 +122,7 @@ func (f *TagsService) create(ctx context.Context, id int64, callback string) (ta
 }
 
 func (f *TagsService) assign(ctx context.Context, id int64, callback string) (tagResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, id)
+	state, s, exists := fsm.GetDraft[session](f.machine, id)
 	if !exists {
 		return tagResult{status: tagSessionMissing}, nil
 	}
@@ -153,7 +153,7 @@ func (f *TagsService) assign(ctx context.Context, id int64, callback string) (ta
 }
 
 func (f *TagsService) changePage(ctx context.Context, id int64, callback string) (tagResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, id)
+	state, s, exists := fsm.GetDraft[session](f.machine, id)
 	if !exists {
 		return tagResult{status: tagSessionMissing}, nil
 	}
@@ -187,7 +187,7 @@ func (f *TagsService) changePage(ctx context.Context, id int64, callback string)
 }
 
 func (f *TagsService) selectEvent(ctx context.Context, id int64, callback string) (tagResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, id)
+	state, s, exists := fsm.GetDraft[session](f.machine, id)
 	if !exists {
 		return tagResult{status: tagSessionMissing}, nil
 	}
@@ -233,7 +233,7 @@ func (f *TagsService) selectEvent(ctx context.Context, id int64, callback string
 }
 
 func (f *TagsService) toggleTag(ctx context.Context, id int64, callback string) (tagResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, id)
+	state, s, exists := fsm.GetDraft[session](f.machine, id)
 	if !exists {
 		return tagResult{status: tagSessionMissing}, nil
 	}
@@ -274,7 +274,7 @@ func (f *TagsService) toggleTag(ctx context.Context, id int64, callback string) 
 }
 
 func (f *TagsService) clearTags(ctx context.Context, id int64, callback string) (tagResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, id)
+	state, s, exists := fsm.GetDraft[session](f.machine, id)
 	if !exists {
 		return tagResult{status: tagSessionMissing}, nil
 	}
@@ -305,7 +305,7 @@ func (f *TagsService) clearTags(ctx context.Context, id int64, callback string) 
 }
 
 func (f *TagsService) saveTags(ctx context.Context, id int64, callback string) (tagResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, id)
+	state, s, exists := fsm.GetDraft[session](f.machine, id)
 	if !exists {
 		return tagResult{status: tagSessionMissing}, nil
 	}
@@ -344,7 +344,7 @@ func (f *TagsService) saveTags(ctx context.Context, id int64, callback string) (
 }
 
 func (f *TagsService) staleCallback(ctx context.Context, id int64, callback string) (tagResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, id)
+	state, s, exists := fsm.GetDraft[session](f.machine, id)
 	if !exists {
 		return tagResult{status: tagSessionMissing}, nil
 	}
@@ -372,7 +372,7 @@ func (f *TagsService) staleCallback(ctx context.Context, id int64, callback stri
 }
 
 func (f *TagsService) name(ctx context.Context, id int64, text, callback string) (tagResult, error) {
-	state, s, exists := fsm.Load[session](f.machine, id)
+	state, s, exists := fsm.GetDraft[session](f.machine, id)
 	if !exists {
 		return tagResult{status: tagSessionMissing}, nil
 	}
@@ -460,7 +460,7 @@ func (f *TagsService) restore(ctx context.Context, userID int64, state fsm.State
 }
 
 func (f *TagsService) snapshot(userID int64) (fsm.StateID, *session) {
-	state, s, exists := fsm.Load[session](f.machine, userID)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
 	if !exists {
 		return fsm.Idle, nil
 	}

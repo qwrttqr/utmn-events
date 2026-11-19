@@ -103,7 +103,7 @@ func (f *EventEditingService) completeStep(userID int64, state fsm.StateID, d ev
 }
 
 func (f *EventEditingService) cancelForm(userID int64) editingResult {
-	_, _, exists := fsm.Load[eventDraft](f.machine, userID)
+	_, _, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -113,7 +113,7 @@ func (f *EventEditingService) cancelForm(userID int64) editingResult {
 }
 
 func (f *EventEditingService) setTitle(userID int64, text string) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -133,7 +133,7 @@ func (f *EventEditingService) setTitle(userID int64, text string) editingResult 
 }
 
 func (f *EventEditingService) setDescription(userID int64, text string) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -153,7 +153,7 @@ func (f *EventEditingService) setDescription(userID int64, text string) editingR
 }
 
 func (f *EventEditingService) skipDescription(userID int64) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -166,7 +166,7 @@ func (f *EventEditingService) skipDescription(userID int64) editingResult {
 }
 
 func (f *EventEditingService) setPhoto(userID int64, photo string) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -182,7 +182,7 @@ func (f *EventEditingService) setPhoto(userID int64, photo string) editingResult
 }
 
 func (f *EventEditingService) skipPhoto(userID int64) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -195,7 +195,7 @@ func (f *EventEditingService) skipPhoto(userID int64) editingResult {
 }
 
 func (f *EventEditingService) setLocation(userID int64, text string) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -215,7 +215,7 @@ func (f *EventEditingService) setLocation(userID int64, text string) editingResu
 }
 
 func (f *EventEditingService) setStart(userID int64, text string) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -239,7 +239,7 @@ func (f *EventEditingService) setStart(userID int64, text string) editingResult 
 }
 
 func (f *EventEditingService) setEnd(userID int64, text string) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -263,7 +263,7 @@ func (f *EventEditingService) setEnd(userID int64, text string) editingResult {
 }
 
 func (f *EventEditingService) setCapacity(userID int64, text string) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -285,7 +285,7 @@ func (f *EventEditingService) setCapacity(userID int64, text string) editingResu
 }
 
 func (f *EventEditingService) unlimitedCapacity(userID int64) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -298,7 +298,7 @@ func (f *EventEditingService) unlimitedCapacity(userID int64) editingResult {
 }
 
 func (f *EventEditingService) setTags(userID int64, text string) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -334,7 +334,7 @@ func (f *EventEditingService) setTags(userID int64, text string) editingResult {
 }
 
 func (f *EventEditingService) skipTags(userID int64) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
@@ -347,7 +347,7 @@ func (f *EventEditingService) skipTags(userID int64) editingResult {
 }
 
 func (f *EventEditingService) confirmEvent(ctx context.Context, userID int64) (editingResult, error) {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}, nil
 	}
@@ -409,7 +409,7 @@ func (f *EventEditingService) restore(userID int64, state fsm.StateID, saved eve
 }
 
 func (f *EventEditingService) staleCallback(userID int64) editingResult {
-	state, d, exists := fsm.Load[eventDraft](f.machine, userID)
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}

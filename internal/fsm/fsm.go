@@ -36,7 +36,7 @@ func (f *FSM) CurrentState(userID int64) StateID {
 	return active.state
 }
 
-func Load[D any](f *FSM, userID int64) (StateID, D, bool) {
+func GetDraft[D any](f *FSM, userID int64) (StateID, D, bool) {
 	active, _ := f.sessions.Get(userID)
 	draft, ok := active.draft.(D)
 	if !ok {
