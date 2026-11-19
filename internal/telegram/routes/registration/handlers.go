@@ -2,9 +2,11 @@ package registration
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
-	"utmn-events-bot/internal/telegram/handlers"
+	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/filters"
 	"utmn-events-bot/internal/telegram/navigation"
 
 	"github.com/go-telegram/bot"
@@ -22,13 +24,32 @@ func NewHandler(navigator *navigation.Navigator, service *Service) *Handler {
 func (h *Handler) Register(b *bot.Bot) {
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "registration:start", bot.MatchTypeExact, h.Start)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "registration:restart", bot.MatchTypeExact, h.Start)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "registration:confirm", bot.MatchTypeExact, h.Confirm)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "registration:skip", bot.MatchTypeExact, h.SkipSurname)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackData(update, "registration:confirm") &&
+			filters.MatchState(update, h.service.machine, registrationConfirmation)
+	}, h.Confirm)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackData(update, "registration:skip") &&
+			filters.MatchState(update, h.service.machine, surname)
+	}, h.SkipSurname)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackData(update, "registration:confirm") ||
+			filters.MatchCallbackData(update, "registration:skip")
+	}, h.showCurrentPrompt)
+
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "registration:cancel", bot.MatchTypeExact, h.Cancel)
-	b.RegisterHandlerMatchFunc(handlers.InState(h.service.machine, firstName), h.FirstName)
-	b.RegisterHandlerMatchFunc(handlers.InState(h.service.machine, lastName), h.LastName)
-	b.RegisterHandlerMatchFunc(handlers.InState(h.service.machine, surname), h.Surname)
-	b.RegisterHandlerMatchFunc(handlers.InState(h.service.machine, registrationConfirmation), h.Preview)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, h.service.machine, firstName)
+	}, h.FirstName)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, h.service.machine, lastName)
+	}, h.LastName)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, h.service.machine, surname)
+	}, h.Surname)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, h.service.machine, registrationConfirmation)
+	}, h.Preview)
 }
 
 func (h *Handler) FirstName(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -86,16 +107,16 @@ func (h *Handler) Confirm(ctx context.Context, b *bot.Bot, update *models.Update
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	result, err := h.service.confirm(dbCtx, user.ID, user.Username)
 	cancel()
+	if errors.Is(err, errRegistrationMissing) {
+		h.showPrompt(ctx, b, update, message.Chat.ID, result)
+		return
+	}
 	if err != nil {
 		slog.ErrorContext(ctx, "registration confirm failed", "user_id", user.ID, "error", err)
 		h.send(ctx, b, update, message.Chat.ID, saveErrorPage(result.draft))
 		return
 	}
-	if result.status == registrationCompleted {
-		h.showHome(ctx, b, update, message.Chat.ID)
-		return
-	}
-	h.showPrompt(ctx, b, update, message.Chat.ID, result)
+	h.showHome(ctx, b, update, message.Chat.ID)
 }
 
 func (h *Handler) SkipSurname(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -145,16 +166,22 @@ func (h *Handler) Preview(ctx context.Context, b *bot.Bot, update *models.Update
 	h.send(ctx, b, update, message.Chat.ID, promptPage(result.state, result.draft))
 }
 
+func (h *Handler) showCurrentPrompt(ctx context.Context, b *bot.Bot, update *models.Update) {
+	q := update.CallbackQuery
+	answer(ctx, b, q.ID, "")
+	if q.Message.Message == nil {
+		return
+	}
+	state, d, _ := fsm.GetDraft[draft](h.service.machine, q.From.ID)
+	h.showPrompt(ctx, b, update, q.Message.Message.Chat.ID, registrationResult{state: state, draft: d})
+}
+
 func (h *Handler) showPrompt(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, result registrationResult) {
-	if result.status == registrationMissing {
-		h.send(ctx, b, update, chatID, missingRegistrationPage())
-		return
+	page := promptPage(result.state, result.draft)
+	if result.message != "" {
+		page.Text = result.message + "\n\n" + page.Text
 	}
-	if result.status == registrationInvalidName {
-		h.send(ctx, b, update, chatID, invalidNamePage(result.state, result.draft))
-		return
-	}
-	h.send(ctx, b, update, chatID, promptPage(result.state, result.draft))
+	h.send(ctx, b, update, chatID, page)
 }
 
 func (h *Handler) showHome(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {

@@ -25,6 +25,8 @@ func addTagButtons(page *navigation.Page, buttons ...button) {
 
 type button struct{ text, data string }
 
-func (s session) button(text, action string) button {
-	return button{text, "admin:tag:" + s.token + ":" + action}
+const tagCallbackPrefix = "admin:tag:"
+
+func tagButton(text, action string) button {
+	return button{text, tagCallbackPrefix + action}
 }

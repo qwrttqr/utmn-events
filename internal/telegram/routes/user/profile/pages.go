@@ -1,37 +1,25 @@
 package profile
 
 import (
-	"context"
 	"fmt"
 
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/navigation"
-	usermenu "utmn-events-bot/internal/telegram/routes/user/menu"
 )
 
-func (h *Handler) getPage(ctx context.Context, userID int64, result profileResult) navigation.Page {
-	var message string
-	switch result.status {
-	case profileStale:
+func (h *Handler) getPage(result profileResult) navigation.Page {
+	if result.state == fsm.Idle || result.state == "" {
 		return stalePage()
-	case profileCancelled:
-		return usermenu.GetMainPage(h.isAdmin(ctx, userID))
-	case profileInvalidName:
-		message = "Введите от 1 до 100 символов без команд и переносов строк."
-	case profileUpdated:
-		message = "Профиль обновлён."
 	}
-	if result.state == "" {
-		return navigation.Page{}
-	}
-	page := render(result.state, result.session)
-	if message != "" {
-		page.Text = message + "\n\n" + page.Text
+	page := render(result.state, result.draft)
+	if result.message != "" {
+		page.Text = result.message + "\n\n" + page.Text
 	}
 	return page
 }
 
-func render(state fsm.StateID, d session) navigation.Page {
+func render(state fsm.StateID, d draft) navigation.Page {
 	surname := d.profile.Surname
 	if surname == "" {
 		surname = "не указано"
@@ -47,7 +35,9 @@ func render(state fsm.StateID, d session) navigation.Page {
 	case profilePreview:
 		text = "Проверьте изменения:\n\n" + text
 	}
-	return profilePage(text, state)
+	page := profilePage(text, state)
+	keyboards.WithScreenToken(page.Keyboard, d.Token)
+	return page
 }
 
 func profilePage(text string, state fsm.StateID) navigation.Page {

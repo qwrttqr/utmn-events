@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"utmn-events-bot/internal/domain"
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/pagination"
 )
 
@@ -42,23 +41,13 @@ type session struct {
 	eventID  int64
 	selected map[int64]string
 	tags     []domain.Tag
+	keyboards.TokenizedDraft
 }
-
-type eventsStatus uint8
-
-const (
-	eventsExpired eventsStatus = iota + 1
-	enrollmentCancelled
-	tagsRequired
-	enrollmentSaved
-	enrollmentFull
-	enrollmentClosed
-)
 
 type eventsResult struct {
 	state    fsm.StateID
 	session  session
-	status   eventsStatus
+	message  string
 	event    domain.Event
 	events   []domain.EventSummary
 	enrolled bool
@@ -95,276 +84,97 @@ func cloneSession(s session) session {
 	return s
 }
 
-func (f *EventsService) process(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	if callback == "user:events" {
-		return f.browse(ctx, userID)
-	}
-	if callback == "user:registrations" {
-		return f.myRegistrations(ctx, userID)
-	}
-	if callback == "user:search" {
-		return f.chooseTags(ctx, userID)
-	}
-	_, action, valid := parseCallback(callback)
-	if !valid {
-		return eventsResult{status: eventsExpired}, nil
-	}
-	if strings.HasPrefix(action, "page") {
-		return f.page(ctx, userID, callback)
-	}
-	if action == "open" {
-		return f.open(ctx, userID, callback)
-	}
-	if strings.HasPrefix(action, "toggle") {
-		return f.toggleTag(ctx, userID, callback)
-	}
-	if action == "clear" {
-		return f.clearTags(ctx, userID, callback)
-	}
-	if action == "search" {
-		return f.search(ctx, userID, callback)
-	}
-	if action == "enroll" {
-		return f.enroll(ctx, userID, callback)
-	}
-	if action == "cancel" {
-		return f.cancelEnrollment(ctx, userID, callback)
-	}
-	if action == "keep" {
-		return f.keepEnrollment(ctx, userID, callback)
-	}
-	if action == "confirm" {
-		return f.confirmCancellation(ctx, userID, callback)
-	}
-	return eventsResult{status: eventsExpired}, nil
-}
-
-func (f *EventsService) page(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-	s = cloneSession(s)
-
-	eventID, action, valid := parseCallback(callback)
-	pageNumber, matchesView := strings.CutPrefix(action, pageActionPrefix(state))
-	if !exists || !valid || eventID != 0 || !matchesView || (state != all && state != mine && state != results && state != chooseTags) {
-		return eventsResult{status: eventsExpired}, nil
-	}
-	s.page, _ = pagination.Move(s.page, "page"+pageNumber)
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-
-	f.machine.Replace(userID, state, s)
-	return result, nil
-}
-
-func (f *EventsService) open(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-	s = cloneSession(s)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || eventID == 0 || action != "open" || (state != all && state != mine && state != results) {
-		return eventsResult{status: eventsExpired}, nil
-	}
-
-	s.eventID, state = eventID, card
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-
-	f.machine.Replace(userID, state, s)
-	return result, nil
-}
-
-func (f *EventsService) toggleTag(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-	s = cloneSession(s)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || eventID != 0 || !strings.HasPrefix(action, "toggle") || state != chooseTags {
-		return eventsResult{status: eventsExpired}, nil
-	}
-
-	id, _ := strconv.ParseInt(strings.TrimPrefix(action, "toggle"), 10, 64)
-	for _, tag := range s.tags {
-		if tag.ID != id {
-			continue
-		}
-		if _, selected := s.selected[id]; selected {
-			delete(s.selected, id)
-		} else {
-			s.selected[id] = tag.Name
-		}
-		break
-	}
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-	f.machine.Replace(userID, state, s)
-	return result, nil
-}
-
-func (f *EventsService) clearTags(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-	s = cloneSession(s)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || eventID != 0 || action != "clear" || state != chooseTags {
-		return eventsResult{status: eventsExpired}, nil
-	}
-
-	s.selected = make(map[int64]string)
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-	f.machine.Replace(userID, state, s)
-	return result, nil
-}
-
-func (f *EventsService) search(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-	s = cloneSession(s)
-	var notice eventsStatus
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || eventID != 0 || action != "search" || state != chooseTags {
-		return eventsResult{status: eventsExpired}, nil
-	}
-
-	if len(s.selected) == 0 {
-		notice = tagsRequired
-	} else {
-		state, s.page = results, 0
-	}
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-	result.status = notice
-	f.machine.Replace(userID, state, s)
-	return result, nil
-}
-
-func (f *EventsService) enroll(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-	s = cloneSession(s)
-	var notice eventsStatus
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || eventID == 0 || eventID != s.eventID || action != "enroll" || state != card {
-		return eventsResult{status: eventsExpired}, nil
-	}
-
-	err := f.registrations.Enroll(ctx, eventID, userID)
-	switch {
-	case err == nil:
-		notice = enrollmentSaved
-	case errors.Is(err, domain.ErrEventFull):
-		notice = enrollmentFull
-	case errors.Is(err, domain.ErrEventClosed):
-		notice = enrollmentClosed
-	default:
-		return eventsResult{}, err
-	}
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-	result.status = notice
-	f.machine.Replace(userID, state, s)
-	return result, nil
-}
-
-func (f *EventsService) cancelEnrollment(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-	s = cloneSession(s)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || eventID == 0 || eventID != s.eventID || action != "cancel" || state != card {
-		return eventsResult{status: eventsExpired}, nil
-	}
-
-	state = cancelEnrollment
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-	f.machine.Replace(userID, state, s)
-	return result, nil
-}
-
-func (f *EventsService) keepEnrollment(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-	s = cloneSession(s)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || eventID == 0 || eventID != s.eventID || action != "keep" || state != cancelEnrollment {
-		return eventsResult{status: eventsExpired}, nil
-	}
-
-	state = card
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-	f.machine.Replace(userID, state, s)
-	return result, nil
-}
-
-func (f *EventsService) confirmCancellation(ctx context.Context, userID int64, callback string) (eventsResult, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || eventID == 0 || eventID != s.eventID || action != "confirm" || state != cancelEnrollment {
-		return eventsResult{status: eventsExpired}, nil
-	}
-
-	if err := f.registrations.Unenroll(ctx, eventID, userID); err != nil {
-		return eventsResult{}, err
-	}
-	f.machine.Clear(userID)
-	return eventsResult{status: enrollmentCancelled}, nil
-}
-
 func (f *EventsService) browse(ctx context.Context, userID int64) (eventsResult, error) {
-
-	state, s := all, session{selected: make(map[int64]string)}
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-	f.machine.Replace(userID, state, s)
-	return result, nil
+	return f.loadAndSave(ctx, userID, all, session{})
 }
 
 func (f *EventsService) myRegistrations(ctx context.Context, userID int64) (eventsResult, error) {
-
-	state, s := mine, session{selected: make(map[int64]string)}
-
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-	f.machine.Replace(userID, state, s)
-	return result, nil
+	return f.loadAndSave(ctx, userID, mine, session{})
 }
 
 func (f *EventsService) chooseTags(ctx context.Context, userID int64) (eventsResult, error) {
+	return f.loadAndSave(ctx, userID, chooseTags, session{selected: make(map[int64]string)})
+}
 
-	state, s := chooseTags, session{selected: make(map[int64]string)}
+func (f *EventsService) changePage(ctx context.Context, userID int64, state fsm.StateID, s session, page int) (eventsResult, error) {
+	if page >= 0 && (page == s.page-1 || page == s.page+1) {
+		s.page = page
+	}
+	return f.loadAndSave(ctx, userID, state, s)
+}
 
+func (f *EventsService) open(ctx context.Context, userID int64, s session, eventID int64) (eventsResult, error) {
+	s.eventID = eventID
+	return f.loadAndSave(ctx, userID, card, s)
+}
+
+func (f *EventsService) toggleTag(ctx context.Context, userID int64, s session, tagID int64) (eventsResult, error) {
+	for _, tag := range s.tags {
+		if tag.ID != tagID {
+			continue
+		}
+		s.selected = maps.Clone(s.selected)
+		if _, selected := s.selected[tagID]; selected {
+			delete(s.selected, tagID)
+		} else {
+			s.selected[tagID] = tag.Name
+		}
+		break
+	}
+	return f.loadAndSave(ctx, userID, chooseTags, s)
+}
+
+func (f *EventsService) clearTags(ctx context.Context, userID int64, s session) (eventsResult, error) {
+	s.selected = make(map[int64]string)
+	return f.loadAndSave(ctx, userID, chooseTags, s)
+}
+
+func (f *EventsService) search(ctx context.Context, userID int64, s session) (eventsResult, error) {
+	if len(s.selected) == 0 {
+		result, err := f.loadAndSave(ctx, userID, chooseTags, s)
+		result.message = "Выберите хотя бы один тег."
+		return result, err
+	}
+	s.page = 0
+	return f.loadAndSave(ctx, userID, results, s)
+}
+
+func (f *EventsService) enroll(ctx context.Context, userID int64, s session) (eventsResult, error) {
+	var message string
+	err := f.registrations.Enroll(ctx, s.eventID, userID)
+	switch {
+	case err == nil:
+		message = "Вы записаны на мероприятие."
+	case errors.Is(err, domain.ErrEventFull):
+		message = "Свободных мест больше нет."
+	case errors.Is(err, domain.ErrEventClosed):
+		message = "Запись на это мероприятие уже закрыта."
+	default:
+		return eventsResult{}, err
+	}
+	result, err := f.loadAndSave(ctx, userID, card, s)
+	result.message = message
+	return result, err
+}
+
+func (f *EventsService) cancelEnrollment(ctx context.Context, userID int64, s session) (eventsResult, error) {
+	return f.loadAndSave(ctx, userID, cancelEnrollment, s)
+}
+
+func (f *EventsService) keepEnrollment(ctx context.Context, userID int64, s session) (eventsResult, error) {
+	return f.loadAndSave(ctx, userID, card, s)
+}
+
+func (f *EventsService) confirmCancellation(ctx context.Context, userID int64, s session) (eventsResult, error) {
+	if err := f.registrations.Unenroll(ctx, s.eventID, userID); err != nil {
+		return eventsResult{}, err
+	}
+	f.machine.Clear(userID)
+	return eventsResult{state: fsm.Idle}, nil
+}
+
+func (f *EventsService) loadAndSave(ctx context.Context, userID int64, state fsm.StateID, s session) (eventsResult, error) {
+	s.RotateScreenToken()
 	result, err := f.loadPage(ctx, userID, state, &s)
 	if err != nil {
 		return eventsResult{}, err
@@ -425,11 +235,5 @@ func (f *EventsService) loadPage(ctx context.Context, userID int64, state fsm.St
 }
 
 func (f *EventsService) restore(ctx context.Context, userID int64, state fsm.StateID, saved session) (eventsResult, error) {
-	s := cloneSession(saved)
-	result, err := f.loadPage(ctx, userID, state, &s)
-	if err != nil {
-		return eventsResult{}, err
-	}
-	f.machine.Replace(userID, state, s)
-	return result, nil
+	return f.loadAndSave(ctx, userID, state, cloneSession(saved))
 }

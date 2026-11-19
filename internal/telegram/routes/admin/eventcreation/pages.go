@@ -10,64 +10,20 @@ import (
 	"utmn-events-bot/internal/fsm"
 	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/navigation"
-	adminmenu "utmn-events-bot/internal/telegram/routes/admin/menu"
 )
 
 func (f *Handler) getPage(userID int64, result creationResult) navigation.Page {
-	var message string
-	history := navigation.HistoryMatchCurrent
-	switch result.status {
-	case stepStarted:
-		history = navigation.HistoryPush
-	case creationCancelled:
-		return adminmenu.GetMainPage()
-	case noActiveDraft:
+	if result.state == fsm.Idle {
 		return creationResultPage("Нет активного создания мероприятия.")
-	case eventCreated:
-		return creationResultPage(fmt.Sprintf("Мероприятие «%s» (№%d) создано.", result.draft.event.Title, result.eventID))
-	case stepAlreadyCompleted:
-		message = "Этот шаг уже завершён."
-	case textRequired:
-		message = "Отправьте текст для текущего шага."
-	case invalidTitle:
-		message = "Название должно быть в одну строку, до 200 символов."
-	case descriptionTooLong:
-		message = "Описание должно быть не длиннее 2000 символов."
-	case photoRequired:
-		message = "Отправьте изображение как фото или нажмите «Пропустить»."
-	case locationTooLong:
-		message = "Место должно быть не длиннее 300 символов."
-	case invalidDateFormat:
-		message = "Используйте формат ДД.ММ.ГГГГ ЧЧ:ММ."
-	case startMustBeFuture:
-		message = "Начало должно быть в будущем."
-	case endMustFollowStart:
-		message = "Окончание должно быть позже начала."
-	case invalidCapacity:
-		message = "Введите положительное целое число или нажмите «Без ограничений»."
-	case tagsTooLong:
-		message = "Список тегов должен быть не длиннее 400 символов."
-	case invalidTag:
-		message = "Каждый тег должен быть в одну строку, до 40 символов."
-	case invalidTagCount:
-		message = "Введите от 1 до 10 тегов или нажмите «Пропустить»."
-	case saveFailed:
-		message = "Не удалось сохранить мероприятие. Нажмите «Сохранить» ещё раз."
-	case startExpired:
-		history = navigation.HistoryPush
-		message = "Время начала уже прошло. Введите новую дату и время."
-	case staleAction:
-		message = "Эта кнопка устарела."
 	}
-
 	page := f.prompt(result.state, result.draft)
 	page.Keyboard = keyboards.WithScreenToken(page.Keyboard, result.draft.Token)
 	page.Key = "admin:event:" + string(result.state)
 	page.Admin = true
-	if message != "" {
-		page.Text = message + "\n\n" + page.Text
+	page.HistoryMode = navigation.HistoryMatchCurrent
+	if result.message != "" {
+		page.Text = result.message + "\n\n" + page.Text
 	}
-	page.HistoryMode = history
 
 	state, saved := result.state, cloneDraft(result.draft)
 	page.Restore = func(context.Context) (navigation.Page, error) {

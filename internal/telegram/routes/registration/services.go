@@ -2,6 +2,7 @@ package registration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -21,18 +22,14 @@ type draft struct {
 	profile domain.User
 }
 
-type registrationStatus uint8
+var errRegistrationMissing = errors.New("registration draft missing")
 
-const (
-	registrationMissing registrationStatus = iota + 1
-	registrationCompleted
-	registrationInvalidName
-)
+const invalidNameMessage = "Введите от 1 до 100 символов без команд и переносов строк."
 
 type registrationResult struct {
-	state  fsm.StateID
-	draft  draft
-	status registrationStatus
+	state   fsm.StateID
+	draft   draft
+	message string
 }
 
 type UserRepository interface {
@@ -74,90 +71,73 @@ func (s *Service) setFirstName(userID int64, text string) registrationResult {
 	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 
 	if !exists {
-		return registrationResult{status: registrationMissing}
-	}
-
-	if state != firstName {
-		return registrationResult{state: state, draft: d}
+		return registrationResult{state: fsm.Idle}
 	}
 
 	text = strings.TrimSpace(text)
 
 	if !validName(text) {
-		return registrationResult{state: state, draft: d, status: registrationInvalidName}
+		return registrationResult{state: state, draft: d, message: invalidNameMessage}
 	}
 
-	d.profile.FirstName, state = text, lastName
-	s.machine.Replace(userID, state, d)
-	return registrationResult{state: state, draft: d}
+	d.profile.FirstName = text
+	s.machine.Replace(userID, lastName, d)
+	return registrationResult{state: lastName, draft: d}
 }
 
 func (s *Service) setLastName(userID int64, text string) registrationResult {
 	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 
 	if !exists {
-		return registrationResult{status: registrationMissing}
-	}
-
-	if state != lastName {
-		return registrationResult{state: state, draft: d}
+		return registrationResult{state: fsm.Idle}
 	}
 
 	text = strings.TrimSpace(text)
 
 	if !validName(text) {
-		return registrationResult{state: state, draft: d, status: registrationInvalidName}
+		return registrationResult{state: state, draft: d, message: invalidNameMessage}
 	}
 
-	d.profile.LastName, state = text, surname
-	s.machine.Replace(userID, state, d)
-	return registrationResult{state: state, draft: d}
+	d.profile.LastName = text
+	s.machine.Replace(userID, surname, d)
+	return registrationResult{state: surname, draft: d}
 }
 
 func (s *Service) setSurname(userID int64, text string) registrationResult {
 	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 	if !exists {
-		return registrationResult{status: registrationMissing}
-	}
-	if state != surname {
-		return registrationResult{state: state, draft: d}
+		return registrationResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if !validName(text) {
-		return registrationResult{state: state, draft: d, status: registrationInvalidName}
+		return registrationResult{state: state, draft: d, message: invalidNameMessage}
 	}
-	d.profile.Surname, state = text, registrationConfirmation
-	s.machine.Replace(userID, state, d)
-	return registrationResult{state: state, draft: d}
+	d.profile.Surname = text
+	s.machine.Replace(userID, registrationConfirmation, d)
+	return registrationResult{state: registrationConfirmation, draft: d}
 }
 
 func (s *Service) skipSurname(userID int64) registrationResult {
-	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
+	_, d, exists := fsm.GetDraft[draft](s.machine, userID)
 	if !exists {
-		return registrationResult{status: registrationMissing}
+		return registrationResult{state: fsm.Idle}
 	}
-	if state != surname {
-		return registrationResult{state: state, draft: d}
-	}
-	d.profile.Surname, state = "", registrationConfirmation
-	s.machine.Replace(userID, state, d)
-	return registrationResult{state: state, draft: d}
+	d.profile.Surname = ""
+	s.machine.Replace(userID, registrationConfirmation, d)
+	return registrationResult{state: registrationConfirmation, draft: d}
 }
 
 func (s *Service) confirm(ctx context.Context, userID int64, username string) (registrationResult, error) {
 	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
 	if !exists {
-		return registrationResult{status: registrationMissing}, nil
-	}
-	if state != registrationConfirmation {
-		return registrationResult{state: state, draft: d}, nil
+		return registrationResult{state: fsm.Idle}, errRegistrationMissing
 	}
 	d.profile.Username = username
 	if err := s.users.Create(ctx, d.profile); err != nil {
 		return registrationResult{state: state, draft: d}, fmt.Errorf("save registration: %w", err)
 	}
 	s.clear(userID)
-	return registrationResult{status: registrationCompleted}, nil
+	return registrationResult{state: fsm.Idle}, nil
 }
 
 func (s *Service) preview(userID int64, username string) registrationResult {

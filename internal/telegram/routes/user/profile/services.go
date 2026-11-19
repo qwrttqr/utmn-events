@@ -10,6 +10,7 @@ import (
 
 	"utmn-events-bot/internal/domain"
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 )
 
 type Repository interface {
@@ -35,24 +36,16 @@ const (
 	surnameField   profileField = "surname"
 )
 
-type session struct {
+type draft struct {
 	profile domain.User
 	field   profileField
+	keyboards.TokenizedDraft
 }
-
-type profileStatus uint8
-
-const (
-	profileStale profileStatus = iota + 1
-	profileCancelled
-	profileInvalidName
-	profileUpdated
-)
 
 type profileResult struct {
 	state   fsm.StateID
-	session session
-	status  profileStatus
+	draft   draft
+	message string
 }
 
 type ProfileService struct {
@@ -63,99 +56,47 @@ type ProfileService struct {
 func NewService(machine *fsm.FSM, repo Repository) *ProfileService {
 	return &ProfileService{repo: repo, machine: machine}
 }
+
 func (s *ProfileService) begin(ctx context.Context, userID int64) (profileResult, error) {
 	user, err := s.repo.GetByTelegramID(ctx, userID)
 	if err != nil {
 		return profileResult{}, err
 	}
-	state, d := profileView, session{profile: user}
-	s.machine.Replace(userID, state, d)
-	return profileResult{state: state, session: d}, nil
+	return s.replaceDraft(userID, profileView, draft{profile: user}), nil
 }
 
-func (s *ProfileService) editFirstName(userID int64) profileResult {
-	state, d, exists := fsm.GetDraft[session](s.machine, userID)
-	if !exists || state != profileView {
-		return profileResult{status: profileStale}
-	}
-	state, d.field = profileFirstName, firstNameField
-	s.machine.Replace(userID, state, d)
-	return profileResult{state: state, session: d}
+func (s *ProfileService) edit(userID int64, d draft, state fsm.StateID, field profileField) profileResult {
+	d.field = field
+	return s.replaceDraft(userID, state, d)
 }
-func (s *ProfileService) setFirstName(userID int64, text string) profileResult {
-	state, d, exists := fsm.GetDraft[session](s.machine, userID)
-	if !exists || state != profileFirstName {
-		return profileResult{status: profileStale}
+
+func (s *ProfileService) setName(userID int64, text string, field profileField) profileResult {
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
+	if !exists {
+		return profileResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if !validName(text) {
-		return profileResult{state: state, session: d, status: profileInvalidName}
+		return profileResult{state: state, draft: d, message: "Введите от 1 до 100 символов без команд и переносов строк."}
 	}
-	d.profile.FirstName, state = text, profilePreview
-	s.machine.Replace(userID, state, d)
-	return profileResult{state: state, session: d}
+	switch field {
+	case firstNameField:
+		d.profile.FirstName = text
+	case lastNameField:
+		d.profile.LastName = text
+	case surnameField:
+		d.profile.Surname = text
+	}
+	return s.replaceDraft(userID, profilePreview, d)
 }
 
-func (s *ProfileService) editLastName(userID int64) profileResult {
-	state, d, exists := fsm.GetDraft[session](s.machine, userID)
-	if !exists || state != profileView {
-		return profileResult{status: profileStale}
-	}
-	state, d.field = profileLastName, lastNameField
-	s.machine.Replace(userID, state, d)
-	return profileResult{state: state, session: d}
-}
-func (s *ProfileService) setLastName(userID int64, text string) profileResult {
-	state, d, exists := fsm.GetDraft[session](s.machine, userID)
-	if !exists || state != profileLastName {
-		return profileResult{status: profileStale}
-	}
-	text = strings.TrimSpace(text)
-	if !validName(text) {
-		return profileResult{state: state, session: d, status: profileInvalidName}
-	}
-	d.profile.LastName, state = text, profilePreview
-	s.machine.Replace(userID, state, d)
-	return profileResult{state: state, session: d}
+func (s *ProfileService) clearSurname(userID int64, d draft) profileResult {
+	d.profile.Surname = ""
+	return s.replaceDraft(userID, profilePreview, d)
 }
 
-func (s *ProfileService) editSurname(userID int64) profileResult {
-	state, d, exists := fsm.GetDraft[session](s.machine, userID)
-	if !exists || state != profileView {
-		return profileResult{status: profileStale}
-	}
-	state, d.field = profileSurname, surnameField
-	s.machine.Replace(userID, state, d)
-	return profileResult{state: state, session: d}
-}
-func (s *ProfileService) setSurname(userID int64, text string) profileResult {
-	state, d, exists := fsm.GetDraft[session](s.machine, userID)
-	if !exists || state != profileSurname {
-		return profileResult{status: profileStale}
-	}
-	text = strings.TrimSpace(text)
-	if !validName(text) {
-		return profileResult{state: state, session: d, status: profileInvalidName}
-	}
-	d.profile.Surname, state = text, profilePreview
-	s.machine.Replace(userID, state, d)
-	return profileResult{state: state, session: d}
-}
-
-func (s *ProfileService) clearSurname(userID int64) profileResult {
-	state, d, exists := fsm.GetDraft[session](s.machine, userID)
-	if !exists || state != profileSurname {
-		return profileResult{status: profileStale}
-	}
-	d.profile.Surname, state = "", profilePreview
-	s.machine.Replace(userID, state, d)
-	return profileResult{state: state, session: d}
-}
-func (s *ProfileService) confirm(ctx context.Context, userID int64) (profileResult, error) {
-	state, d, exists := fsm.GetDraft[session](s.machine, userID)
-	if !exists || state != profilePreview {
-		return profileResult{status: profileStale}, nil
-	}
+func (s *ProfileService) confirm(ctx context.Context, userID int64, d draft) (profileResult, error) {
+	preview := profileResult{state: profilePreview, draft: d}
 	var err error
 	switch d.field {
 	case firstNameField:
@@ -165,27 +106,28 @@ func (s *ProfileService) confirm(ctx context.Context, userID int64) (profileResu
 	case surnameField:
 		err = s.repo.UpdateSurname(ctx, userID, d.profile.Surname)
 	default:
-		return profileResult{}, errors.New("invalid profile field")
+		return preview, errors.New("invalid profile field")
 	}
 	if err != nil {
-		return profileResult{state: state, session: d}, fmt.Errorf("save profile: %w", err)
+		return preview, fmt.Errorf("save profile: %w", err)
 	}
 	user, err := s.repo.GetByTelegramID(ctx, userID)
 	if err != nil {
-		return profileResult{state: state, session: d}, err
+		return preview, err
 	}
-	state, d = profileView, session{profile: user}
-	s.machine.Replace(userID, state, d)
-	return profileResult{state: state, session: d, status: profileUpdated}, nil
+	result := s.replaceDraft(userID, profileView, draft{profile: user})
+	result.message = "Профиль обновлён."
+	return result, nil
 }
 
-func (s *ProfileService) cancelEdit(userID int64) profileResult {
-	state, _, exists := fsm.GetDraft[session](s.machine, userID)
-	if !exists || state == profileView {
-		return profileResult{status: profileStale}
-	}
+func (s *ProfileService) cancelEdit(userID int64) {
 	s.machine.Clear(userID)
-	return profileResult{status: profileCancelled}
+}
+
+func (s *ProfileService) replaceDraft(userID int64, state fsm.StateID, d draft) profileResult {
+	d.RotateScreenToken()
+	s.machine.Replace(userID, state, d)
+	return profileResult{state: state, draft: d}
 }
 
 func validName(text string) bool {

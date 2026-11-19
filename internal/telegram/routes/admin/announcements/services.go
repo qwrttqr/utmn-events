@@ -28,22 +28,15 @@ type draft struct {
 	keyboards.TokenizedDraft
 }
 
-type announcementStatus uint8
-
-const (
-	announcementMissing announcementStatus = iota + 1
-	announcementCancelled
-	announcementStale
-	announcementTextRequired
-	announcementTooLong
-	broadcastInProgress
-	broadcastStarted
+var (
+	errBroadcastInProgress = errors.New("announcement broadcast already in progress")
+	errStaleAnnouncement   = errors.New("announcement draft is stale")
 )
 
 type announcementResult struct {
-	state  fsm.StateID
-	draft  draft
-	status announcementStatus
+	state   fsm.StateID
+	draft   draft
+	message string
 }
 
 type delivery struct {
@@ -80,34 +73,34 @@ func NewService(ctx context.Context, machine *fsm.FSM, repo Repository) *Service
 	}
 }
 
-func (s *Service) begin(userID int64) announcementResult {
+func (s *Service) begin(userID int64) (announcementResult, bool) {
 	s.mu.Lock()
 	active := s.active[userID]
 	s.mu.Unlock()
 	if active {
-		return announcementResult{status: broadcastInProgress}
+		return announcementResult{}, false
 	}
 	d := draft{}
 	d.RotateScreenToken()
 	s.machine.Replace(userID, enterTextState, d)
-	return announcementResult{state: enterTextState, draft: d}
+	return announcementResult{state: enterTextState, draft: d}, true
 }
 
 func (s *Service) setText(userID int64, text string) announcementResult {
 	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
-	if !exists || state != enterTextState {
-		return announcementResult{status: announcementMissing}
+	if !exists {
+		return announcementResult{state: fsm.Idle, message: "Откройте создание объявления заново."}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return announcementResult{state: state, draft: d, status: announcementTextRequired}
+		return announcementResult{state: state, draft: d, message: "Отправьте текст объявления."}
 	}
 	length := 0
 	for _, r := range text {
 		length += utf16.RuneLen(r)
 	}
 	if length > 4000 {
-		return announcementResult{state: state, draft: d, status: announcementTooLong}
+		return announcementResult{state: state, draft: d, message: "Текст слишком длинный: максимум 4000 символов, эмодзи могут занимать два символа."}
 	}
 	d.text, state = text, previewState
 	d.RotateScreenToken()
@@ -115,43 +108,42 @@ func (s *Service) setText(userID int64, text string) announcementResult {
 	return announcementResult{state: state, draft: d}
 }
 
-func (s *Service) edit(userID int64, token string) announcementResult {
-	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
-	if !exists || state != previewState || !d.IsTokenValid(token) {
-		return announcementResult{status: announcementStale}
+func (s *Service) edit(userID int64, token string) (announcementResult, bool) {
+	_, d, exists := fsm.GetDraft[draft](s.machine, userID)
+	if !exists || !d.IsTokenValid(token) {
+		return announcementResult{}, false
 	}
-	state = enterTextState
 	d.RotateScreenToken()
-	s.machine.Replace(userID, state, d)
-	return announcementResult{state: state, draft: d}
+	s.machine.Replace(userID, enterTextState, d)
+	return announcementResult{state: enterTextState, draft: d}, true
 }
 
-func (s *Service) cancelDraft(userID int64, token string) announcementResult {
-	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
-	if !exists || (state != enterTextState && state != previewState) || !d.IsTokenValid(token) {
-		return announcementResult{status: announcementStale}
+func (s *Service) cancelDraft(userID int64, token string) bool {
+	_, d, exists := fsm.GetDraft[draft](s.machine, userID)
+	if !exists || !d.IsTokenValid(token) {
+		return false
 	}
 	s.machine.Clear(userID)
-	return announcementResult{status: announcementCancelled}
+	return true
 }
 
-func (s *Service) prepareSend(userID int64, token string) (announcementResult, *delivery, error) {
+func (s *Service) prepareSend(userID int64, token string) (delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ctx.Err() != nil {
-		return announcementResult{}, nil, errors.New("announcement service stopped")
+		return delivery{}, errors.New("announcement service stopped")
 	}
 	if s.active[userID] {
-		return announcementResult{status: broadcastInProgress}, nil, nil
+		return delivery{}, errBroadcastInProgress
 	}
-	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
-	if !exists || state != previewState || !d.IsTokenValid(token) {
-		return announcementResult{status: announcementStale}, nil, nil
+	_, d, exists := fsm.GetDraft[draft](s.machine, userID)
+	if !exists || !d.IsTokenValid(token) {
+		return delivery{}, errStaleAnnouncement
 	}
 	s.machine.Clear(userID)
 	s.active[userID] = true
 	s.workers.Add(1)
-	return announcementResult{status: broadcastStarted}, &delivery{authorID: userID, text: d.text}, nil
+	return delivery{authorID: userID, text: d.text}, nil
 }
 
 func (s *Service) send(job delivery, sendMessage func(context.Context, int64, string) error, sendReport func(context.Context, int64, report) error) {

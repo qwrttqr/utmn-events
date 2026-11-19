@@ -5,9 +5,11 @@ import (
 	"log/slog"
 	"time"
 	"utmn-events-bot/internal/fsm"
-	"utmn-events-bot/internal/telegram/handlers"
+	"utmn-events-bot/internal/telegram/filters"
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/middleware"
 	"utmn-events-bot/internal/telegram/navigation"
+	usermenu "utmn-events-bot/internal/telegram/routes/user/menu"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -25,15 +27,46 @@ func NewHandler(navigator *navigation.Navigator, service *ProfileService, isAdmi
 func Register(b *bot.Bot, navigator *navigation.Navigator, service *ProfileService, isAdmin middleware.AdminChecker) {
 	h := NewHandler(navigator, service, isAdmin)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile", bot.MatchTypeExact, h.Begin)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:first_name", bot.MatchTypeExact, h.EditFirstName)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:last_name", bot.MatchTypeExact, h.EditLastName)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:surname", bot.MatchTypeExact, h.EditSurname)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:clear_surname", bot.MatchTypeExact, h.ClearSurname)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:save", bot.MatchTypeExact, h.Save)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:cancel", bot.MatchTypeExact, h.Cancel)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, profileFirstName), h.FirstName)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, profileLastName), h.LastName)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, profileSurname), h.Surname)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("user:profile:first_name")) &&
+			filters.MatchState(update, service.machine, profileView)
+	}, h.editField(profileFirstName, firstNameField))
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("user:profile:last_name")) &&
+			filters.MatchState(update, service.machine, profileView)
+	}, h.editField(profileLastName, lastNameField))
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("user:profile:surname")) &&
+			filters.MatchState(update, service.machine, profileView)
+	}, h.editField(profileSurname, surnameField))
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("user:profile:clear_surname")) &&
+			filters.MatchState(update, service.machine, profileSurname)
+	}, h.withDraft(func(_ context.Context, userID int64, d draft) (profileResult, error) {
+		return service.clearSurname(userID, d), nil
+	}))
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("user:profile:save")) &&
+			filters.MatchState(update, service.machine, profilePreview)
+	}, h.withDraft(service.confirm))
+
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("user:profile:cancel")) &&
+			filters.MatchState(update, service.machine, profileFirstName, profileLastName, profileSurname, profilePreview)
+	}, h.withDraft(func(_ context.Context, userID int64, _ draft) (profileResult, error) {
+		service.cancelEdit(userID)
+		return profileResult{state: fsm.Idle}, nil
+	}))
+
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, profileFirstName)
+	}, h.setName(firstNameField))
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, profileLastName)
+	}, h.setName(lastNameField))
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, profileSurname)
+	}, h.setName(surnameField))
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:profile:", bot.MatchTypePrefix, h.StaleCallback)
 }
 
@@ -48,125 +81,65 @@ func (h *Handler) Begin(ctx context.Context, b *bot.Bot, update *models.Update) 
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	result, err := h.service.begin(dbCtx, q.From.ID)
-	view := h.getPage(ctx, q.From.ID, result)
 	cancel()
+	page := h.getPage(result)
 	if err != nil {
 		slog.ErrorContext(ctx, "profile begin failed", "user_id", q.From.ID, "error", err)
-		view.Text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.Text
+		page = profilePage("Не удалось выполнить действие. Попробуйте ещё раз.", fsm.Idle)
 	}
-	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
+	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, page)
 }
 
-func (h *Handler) EditFirstName(ctx context.Context, b *bot.Bot, update *models.Update) {
-	q := update.CallbackQuery
-	if q == nil {
-		return
-	}
-	answerCallback(ctx, b, q.ID)
-	if q.Message.Message == nil {
-		return
-	}
-	view := h.getPage(ctx, q.From.ID, h.service.editFirstName(q.From.ID))
-	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
+func (h *Handler) editField(state fsm.StateID, field profileField) bot.HandlerFunc {
+	return h.withDraft(func(_ context.Context, userID int64, d draft) (profileResult, error) {
+		return h.service.edit(userID, d, state, field), nil
+	})
 }
 
-func (h *Handler) EditLastName(ctx context.Context, b *bot.Bot, update *models.Update) {
-	q := update.CallbackQuery
-	if q == nil {
-		return
+func (h *Handler) withDraft(action func(context.Context, int64, draft) (profileResult, error)) bot.HandlerFunc {
+	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+		q := update.CallbackQuery
+		if q == nil {
+			return
+		}
+		answerCallback(ctx, b, q.ID)
+		if q.Message.Message == nil {
+			return
+		}
+		chatID := q.Message.Message.Chat.ID
+		_, token, ok := keyboards.ParseScreenCallback(q.Data)
+		_, d, exists := fsm.GetDraft[draft](h.service.machine, q.From.ID)
+		if !ok || !exists || !d.IsTokenValid(token) {
+			h.show(ctx, b, update, q.From.ID, chatID, stalePage())
+			return
+		}
+
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		result, err := action(dbCtx, q.From.ID, d)
+		cancel()
+		var page navigation.Page
+		if err != nil {
+			slog.ErrorContext(ctx, "profile action failed", "user_id", q.From.ID, "error", err)
+			result.message = "Не удалось выполнить действие. Попробуйте ещё раз."
+			page = h.getPage(result)
+		} else if result.state == fsm.Idle {
+			page = usermenu.GetMainPage(h.isAdmin(ctx, q.From.ID))
+		} else {
+			page = h.getPage(result)
+		}
+		h.show(ctx, b, update, q.From.ID, chatID, page)
 	}
-	answerCallback(ctx, b, q.ID)
-	if q.Message.Message == nil {
-		return
-	}
-	view := h.getPage(ctx, q.From.ID, h.service.editLastName(q.From.ID))
-	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
 }
 
-func (h *Handler) EditSurname(ctx context.Context, b *bot.Bot, update *models.Update) {
-	q := update.CallbackQuery
-	if q == nil {
-		return
+func (h *Handler) setName(field profileField) bot.HandlerFunc {
+	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+		m := update.Message
+		if m == nil || m.From == nil {
+			return
+		}
+		result := h.service.setName(m.From.ID, m.Text, field)
+		h.show(ctx, b, update, m.From.ID, m.Chat.ID, h.getPage(result))
 	}
-	answerCallback(ctx, b, q.ID)
-	if q.Message.Message == nil {
-		return
-	}
-	view := h.getPage(ctx, q.From.ID, h.service.editSurname(q.From.ID))
-	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
-}
-
-func (h *Handler) ClearSurname(ctx context.Context, b *bot.Bot, update *models.Update) {
-	q := update.CallbackQuery
-	if q == nil {
-		return
-	}
-	answerCallback(ctx, b, q.ID)
-	if q.Message.Message == nil {
-		return
-	}
-	view := h.getPage(ctx, q.From.ID, h.service.clearSurname(q.From.ID))
-	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
-}
-
-func (h *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
-	q := update.CallbackQuery
-	if q == nil {
-		return
-	}
-	answerCallback(ctx, b, q.ID)
-	if q.Message.Message == nil {
-		return
-	}
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	result, err := h.service.confirm(dbCtx, q.From.ID)
-	view := h.getPage(ctx, q.From.ID, result)
-	cancel()
-	if err != nil {
-		slog.ErrorContext(ctx, "profile confirm failed", "user_id", q.From.ID, "error", err)
-		view.Text = "Не удалось выполнить действие. Попробуйте ещё раз.\n\n" + view.Text
-	}
-	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
-}
-
-func (h *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update) {
-	q := update.CallbackQuery
-	if q == nil {
-		return
-	}
-	answerCallback(ctx, b, q.ID)
-	if q.Message.Message == nil {
-		return
-	}
-	view := h.getPage(ctx, q.From.ID, h.service.cancelEdit(q.From.ID))
-	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, view)
-}
-
-func (h *Handler) FirstName(ctx context.Context, b *bot.Bot, update *models.Update) {
-	m := update.Message
-	if m == nil || m.From == nil {
-		return
-	}
-	view := h.getPage(ctx, m.From.ID, h.service.setFirstName(m.From.ID, m.Text))
-	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
-}
-
-func (h *Handler) LastName(ctx context.Context, b *bot.Bot, update *models.Update) {
-	m := update.Message
-	if m == nil || m.From == nil {
-		return
-	}
-	view := h.getPage(ctx, m.From.ID, h.service.setLastName(m.From.ID, m.Text))
-	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
-}
-
-func (h *Handler) Surname(ctx context.Context, b *bot.Bot, update *models.Update) {
-	m := update.Message
-	if m == nil || m.From == nil {
-		return
-	}
-	view := h.getPage(ctx, m.From.ID, h.service.setSurname(m.From.ID, m.Text))
-	h.show(ctx, b, update, m.From.ID, m.Chat.ID, view)
 }
 
 func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -180,7 +153,13 @@ func (h *Handler) StaleCallback(ctx context.Context, b *bot.Bot, update *models.
 	}
 	h.show(ctx, b, update, q.From.ID, q.Message.Message.Chat.ID, stalePage())
 }
-func (h *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, userID, chatID int64, page navigation.Page) {
+func (h *Handler) show(
+	ctx context.Context,
+	b *bot.Bot,
+	update *models.Update,
+	userID, chatID int64,
+	page navigation.Page,
+) {
 	if page.Key == "" {
 		page = profilePage(page.Text, fsm.Idle)
 	}
@@ -189,7 +168,7 @@ func (h *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, u
 			dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			result, err := h.service.begin(dbCtx, userID)
-			view := h.getPage(ctx, userID, result)
+			view := h.getPage(result)
 			if err != nil {
 				return navigation.Page{}, err
 			}

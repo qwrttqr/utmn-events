@@ -36,35 +36,10 @@ type eventDraft struct {
 	keyboards.TokenizedDraft
 }
 
-type creationStatus uint8
-
-const (
-	stepStarted creationStatus = iota + 1
-	noActiveDraft
-	creationCancelled
-	eventCreated
-	stepAlreadyCompleted
-	textRequired
-	invalidTitle
-	descriptionTooLong
-	photoRequired
-	locationTooLong
-	invalidDateFormat
-	startMustBeFuture
-	endMustFollowStart
-	invalidCapacity
-	tagsTooLong
-	invalidTag
-	invalidTagCount
-	saveFailed
-	startExpired
-	staleAction
-)
-
 type creationResult struct {
 	state   fsm.StateID
 	draft   eventDraft
-	status  creationStatus
+	message string
 	eventID int64
 }
 
@@ -86,7 +61,7 @@ func NewService(machine *fsm.FSM, repository Repository) (*EventCreationService,
 
 func (f *EventCreationService) begin(userID int64) creationResult {
 	d := f.replaceDraft(userID, eventTitle, eventDraft{})
-	return creationResult{state: eventTitle, draft: d, status: stepStarted}
+	return creationResult{state: eventTitle, draft: d}
 }
 
 func cloneDraft(d eventDraft) eventDraft {
@@ -98,246 +73,209 @@ func cloneDraft(d eventDraft) eventDraft {
 	return d
 }
 
-func (f *EventCreationService) completeStep(userID int64, state fsm.StateID, d eventDraft) creationResult {
-	previous := state
-	switch previous {
-	case eventTitle:
-		state = eventDescription
-	case eventDescription:
-		state = eventPhoto
-	case eventPhoto:
-		state = eventLocation
-	case eventLocation:
-		state = eventStart
-	case eventStart:
-		state = eventEnd
-	case eventEnd:
-		state = eventCapacity
-	case eventCapacity:
-		state = eventTags
-	case eventTags:
-		state = eventPreview
-	}
-	if previous == eventEnd && d.returnToPreview {
-		state, d.returnToPreview = eventPreview, false
-	}
-	d = f.replaceDraft(userID, state, d)
-	return creationResult{state: state, draft: d, status: stepStarted}
-}
-
-func (f *EventCreationService) cancelForm(userID int64, token string) creationResult {
+func (f *EventCreationService) cancelForm(userID int64, token string) (creationResult, bool) {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
+		return creationResult{state: fsm.Idle}, false
 	}
 	if !d.IsTokenValid(token) {
-		return creationResult{state: state, draft: d, status: staleAction}
+		return creationResult{state: state, draft: d, message: "Эта кнопка устарела."}, false
 	}
 
 	f.machine.Clear(userID)
-	return creationResult{status: creationCancelled}
+	return creationResult{state: fsm.Idle}, true
 }
 
 func (f *EventCreationService) setTitle(userID int64, text string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
-	}
-	if state != eventTitle {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return creationResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
-	if text == "" || strings.HasPrefix(text, "/") {
-		return creationResult{state: state, draft: d, status: textRequired}
+	if text == "" {
+		return creationResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	if utf8.RuneCountInString(text) > 200 || strings.ContainsAny(text, "\r\n") {
-		return creationResult{state: state, draft: d, status: invalidTitle}
+		return creationResult{state: state, draft: d, message: "Название должно быть в одну строку, до 200 символов."}
 	}
 	d.event.Title = text
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventDescription, d)
+	return creationResult{state: eventDescription, draft: d}
 }
 
 func (f *EventCreationService) setDescription(userID int64, text string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
-	}
-	if state != eventDescription {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return creationResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return creationResult{state: state, draft: d, status: textRequired}
+		return creationResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	if utf8.RuneCountInString(text) > 2000 {
-		return creationResult{state: state, draft: d, status: descriptionTooLong}
+		return creationResult{state: state, draft: d, message: "Описание должно быть не длиннее 2000 символов."}
 	}
 	d.event.Description = text
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPhoto, d)
+	return creationResult{state: eventPhoto, draft: d}
 }
 
 func (f *EventCreationService) skipDescription(userID int64, token string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
+		return creationResult{state: fsm.Idle}
 	}
-	if state != eventDescription || !d.IsTokenValid(token) {
-		return creationResult{state: state, draft: d, status: staleAction}
+	if !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, message: "Эта кнопка устарела."}
 	}
 
 	d.event.Description = ""
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPhoto, d)
+	return creationResult{state: eventPhoto, draft: d}
 }
 
 func (f *EventCreationService) setPhoto(userID int64, photo string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
+		return creationResult{state: fsm.Idle}
 	}
-	if state != eventPhoto {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
-	}
-
 	if photo == "" {
-		return creationResult{state: state, draft: d, status: photoRequired}
+		return creationResult{state: state, draft: d, message: "Отправьте изображение как фото или нажмите «Пропустить»."}
 	}
 	d.event.PhotoFileID = photo
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventLocation, d)
+	return creationResult{state: eventLocation, draft: d}
 }
 
 func (f *EventCreationService) skipPhoto(userID int64, token string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
+		return creationResult{state: fsm.Idle}
 	}
-	if state != eventPhoto || !d.IsTokenValid(token) {
-		return creationResult{state: state, draft: d, status: staleAction}
+	if !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, message: "Эта кнопка устарела."}
 	}
 
 	d.event.PhotoFileID = ""
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventLocation, d)
+	return creationResult{state: eventLocation, draft: d}
 }
 
 func (f *EventCreationService) setLocation(userID int64, text string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
-	}
-	if state != eventLocation {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return creationResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return creationResult{state: state, draft: d, status: textRequired}
+		return creationResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	if utf8.RuneCountInString(text) > 300 {
-		return creationResult{state: state, draft: d, status: locationTooLong}
+		return creationResult{state: state, draft: d, message: "Место должно быть не длиннее 300 символов."}
 	}
 	d.event.Location = text
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventStart, d)
+	return creationResult{state: eventStart, draft: d}
 }
 
 func (f *EventCreationService) setStart(userID int64, text string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
-	}
-	if state != eventStart {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return creationResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return creationResult{state: state, draft: d, status: textRequired}
+		return creationResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	value, err := time.ParseInLocation(eventDateLayout, text, f.location)
 	if err != nil {
-		return creationResult{state: state, draft: d, status: invalidDateFormat}
+		return creationResult{state: state, draft: d, message: "Используйте формат ДД.ММ.ГГГГ ЧЧ:ММ."}
 	}
 	if !value.After(f.now()) {
-		return creationResult{state: state, draft: d, status: startMustBeFuture}
+		return creationResult{state: state, draft: d, message: "Начало должно быть в будущем."}
 	}
 	d.event.StartsAt = value.UTC()
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventEnd, d)
+	return creationResult{state: eventEnd, draft: d}
 }
 
 func (f *EventCreationService) setEnd(userID int64, text string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
-	}
-	if state != eventEnd {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return creationResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return creationResult{state: state, draft: d, status: textRequired}
+		return creationResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	value, err := time.ParseInLocation(eventDateLayout, text, f.location)
 	if err != nil {
-		return creationResult{state: state, draft: d, status: invalidDateFormat}
+		return creationResult{state: state, draft: d, message: "Используйте формат ДД.ММ.ГГГГ ЧЧ:ММ."}
 	}
 	if !value.After(d.event.StartsAt) {
-		return creationResult{state: state, draft: d, status: endMustFollowStart}
+		return creationResult{state: state, draft: d, message: "Окончание должно быть позже начала."}
 	}
 	d.event.EndsAt = value.UTC()
-	return f.completeStep(userID, state, d)
+	next := eventCapacity
+	if d.returnToPreview {
+		next = eventPreview
+		d.returnToPreview = false
+	}
+	d = f.replaceDraft(userID, next, d)
+	return creationResult{state: next, draft: d}
 }
 
 func (f *EventCreationService) setCapacity(userID int64, text string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
-	}
-	if state != eventCapacity {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return creationResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return creationResult{state: state, draft: d, status: textRequired}
+		return creationResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	value, err := strconv.ParseInt(text, 10, 32)
 	if err != nil || value <= 0 {
-		return creationResult{state: state, draft: d, status: invalidCapacity}
+		return creationResult{state: state, draft: d, message: "Введите положительное целое число или нажмите «Без ограничений»."}
 	}
 	capacity := int32(value)
 	d.event.Capacity = &capacity
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventTags, d)
+	return creationResult{state: eventTags, draft: d}
 }
 
 func (f *EventCreationService) unlimitedCapacity(userID int64, token string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
+		return creationResult{state: fsm.Idle}
 	}
-	if state != eventCapacity || !d.IsTokenValid(token) {
-		return creationResult{state: state, draft: d, status: staleAction}
+	if !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, message: "Эта кнопка устарела."}
 	}
 
 	d.event.Capacity = nil
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventTags, d)
+	return creationResult{state: eventTags, draft: d}
 }
 
 func (f *EventCreationService) setTags(userID int64, text string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
-	}
-	if state != eventTags {
-		return creationResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return creationResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return creationResult{state: state, draft: d, status: textRequired}
+		return creationResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	if utf8.RuneCountInString(text) > 400 {
-		return creationResult{state: state, draft: d, status: tagsTooLong}
+		return creationResult{state: state, draft: d, message: "Список тегов должен быть не длиннее 400 символов."}
 	}
 	seen := make(map[string]bool)
 	var tags []string
@@ -347,38 +285,40 @@ func (f *EventCreationService) setTags(userID int64, text string) creationResult
 			continue
 		}
 		if utf8.RuneCountInString(tag) > 40 || strings.ContainsAny(tag, "\r\n") {
-			return creationResult{state: state, draft: d, status: invalidTag}
+			return creationResult{state: state, draft: d, message: "Каждый тег должен быть в одну строку, до 40 символов."}
 		}
 		seen[tag] = true
 		tags = append(tags, tag)
 	}
 	if len(tags) == 0 || len(tags) > 10 {
-		return creationResult{state: state, draft: d, status: invalidTagCount}
+		return creationResult{state: state, draft: d, message: "Введите от 1 до 10 тегов или нажмите «Пропустить»."}
 	}
 	d.event.Tags = tags
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return creationResult{state: eventPreview, draft: d}
 }
 
 func (f *EventCreationService) skipTags(userID int64, token string) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
+		return creationResult{state: fsm.Idle}
 	}
-	if state != eventTags || !d.IsTokenValid(token) {
-		return creationResult{state: state, draft: d, status: staleAction}
+	if !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, message: "Эта кнопка устарела."}
 	}
 
 	d.event.Tags = nil
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return creationResult{state: eventPreview, draft: d}
 }
 
 func (f *EventCreationService) confirmEvent(ctx context.Context, userID int64, token string) (creationResult, error) {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}, nil
+		return creationResult{state: fsm.Idle}, nil
 	}
-	if state != eventPreview || !d.IsTokenValid(token) {
-		return creationResult{state: state, draft: d, status: staleAction}, nil
+	if !d.IsTokenValid(token) {
+		return creationResult{state: state, draft: d, message: "Эта кнопка устарела."}, nil
 	}
 
 	if !d.event.StartsAt.After(f.now()) {
@@ -390,17 +330,17 @@ func (f *EventCreationService) confirmEvent(ctx context.Context, userID int64, t
 	}
 
 	if err != nil {
-		return creationResult{state: state, draft: d, status: saveFailed}, fmt.Errorf("save event: %w", err)
+		return creationResult{state: state, draft: d, message: "Не удалось сохранить мероприятие. Нажмите «Сохранить» ещё раз."}, fmt.Errorf("save event: %w", err)
 	}
 	f.machine.Clear(userID)
-	return creationResult{status: eventCreated, draft: d, eventID: id}, nil
+	return creationResult{state: fsm.Idle, draft: d, eventID: id}, nil
 }
 
 func (f *EventCreationService) reenterDates(userID int64, d eventDraft) creationResult {
 	state := eventStart
 	d.returnToPreview = true
 	d = f.replaceDraft(userID, state, d)
-	return creationResult{state: state, draft: d, status: startExpired}
+	return creationResult{state: state, draft: d, message: "Время начала уже прошло. Введите новую дату и время."}
 }
 
 func (f *EventCreationService) replaceDraft(userID int64, state fsm.StateID, d eventDraft) eventDraft {
@@ -412,9 +352,9 @@ func (f *EventCreationService) replaceDraft(userID int64, state fsm.StateID, d e
 func (f *EventCreationService) staleCallback(userID int64) creationResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return creationResult{status: noActiveDraft}
+		return creationResult{state: fsm.Idle}
 	}
-	return creationResult{state: state, draft: d, status: staleAction}
+	return creationResult{state: state, draft: d, message: "Эта кнопка устарела."}
 }
 
 type Repository interface {

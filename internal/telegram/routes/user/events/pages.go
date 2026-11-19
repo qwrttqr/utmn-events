@@ -8,30 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/navigation"
-	usermenu "utmn-events-bot/internal/telegram/routes/user/menu"
 )
 
 func expiredPage() navigation.Page {
 	return navigation.Page{Key: "user:events:expired", Text: "Эта кнопка устарела. Откройте мероприятия заново.", Keyboard: entryKeyboard()}
 }
 
-func (h *Handler) getPage(ctx context.Context, userID int64, result eventsResult) navigation.Page {
-	var message string
-	switch result.status {
-	case eventsExpired:
-		return expiredPage()
-	case enrollmentCancelled:
-		return usermenu.GetMainPage(h.isAdmin(ctx, userID))
-	case tagsRequired:
-		message = "Выберите хотя бы один тег."
-	case enrollmentSaved:
-		message = "Вы записаны на мероприятие."
-	case enrollmentFull:
-		message = "Свободных мест больше нет."
-	case enrollmentClosed:
-		message = "Запись на это мероприятие уже закрыта."
-	}
+func (h *Handler) getPage(userID int64, result eventsResult) navigation.Page {
 	if result.state == "" {
 		return navigation.Page{}
 	}
@@ -63,7 +48,7 @@ func (h *Handler) getPage(ctx context.Context, userID int64, result eventsResult
 		if len(events) == 0 {
 			page.Text += "\nМероприятий не найдено."
 		}
-		page.Keyboard = eventsKeyboard(state, s, events, result.more)
+		page.Keyboard = eventsKeyboard(s, events, result.more)
 	case card, cancelEnrollment:
 		event, enrolled := result.event, result.enrolled
 		page.Keyboard = cardKeyboard(state, s, event, enrolled, h.service.now())
@@ -91,8 +76,11 @@ func (h *Handler) getPage(ctx context.Context, userID int64, result eventsResult
 			}
 		}
 	}
-	if message != "" {
-		page.Text = message + "\n\n" + page.Text
+	if page.Keyboard != nil {
+		keyboards.WithScreenToken(page.Keyboard, s.Token)
+	}
+	if result.message != "" {
+		page.Text = result.message + "\n\n" + page.Text
 	}
 
 	saved := cloneSession(s)
@@ -103,7 +91,7 @@ func (h *Handler) getPage(ctx context.Context, userID int64, result eventsResult
 		if err != nil {
 			return navigation.Page{}, err
 		}
-		return h.getPage(ctx, userID, restored), nil
+		return h.getPage(userID, restored), nil
 	}
 	return page
 }

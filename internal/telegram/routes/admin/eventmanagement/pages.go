@@ -16,12 +16,6 @@ func expiredPage() navigation.Page {
 }
 
 func (h *Handler) getPage(userID int64, result managementResult) navigation.Page {
-	switch result.status {
-	case managementExpired:
-		return expiredPage()
-	case managementDeleted:
-		return navigation.Page{Key: "admin:events:deleted", Text: "Мероприятие удалено.", Admin: true, ClearHistory: true, Keyboard: listKeyboard()}
-	}
 	if result.state == "" {
 		return navigation.Page{}
 	}
@@ -66,7 +60,7 @@ func (h *Handler) getPage(userID int64, result managementResult) navigation.Page
 	page.Restore = func(ctx context.Context) (navigation.Page, error) {
 		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		restored, err := h.service.restore(dbCtx, userID, state, s)
+		restored, err := h.service.loadAndSave(dbCtx, userID, state, s)
 		if err != nil {
 			return navigation.Page{}, err
 		}

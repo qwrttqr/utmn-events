@@ -30,7 +30,7 @@ func WithScreenToken(markup *models.InlineKeyboardMarkup, token string) *models.
 	for _, row := range markup.InlineKeyboard {
 		for i := range row {
 			if row[i].CallbackData != "" {
-				row[i].CallbackData += screenTokenSeparator + token
+				row[i].CallbackData = ScreenCallbackPrefix(row[i].CallbackData) + token
 			}
 		}
 	}
@@ -42,13 +42,6 @@ func ParseScreenCallback(data string) (action, token string, ok bool) {
 	return action, token, found && action != "" && token != ""
 }
 
-func MatchScreenAction(want string) func(*models.Update) bool {
-	return func(update *models.Update) bool {
-		q := update.CallbackQuery
-		if q == nil {
-			return false
-		}
-		action, _, ok := ParseScreenCallback(q.Data)
-		return ok && action == want
-	}
+func ScreenCallbackPrefix(action string) string {
+	return action + screenTokenSeparator
 }

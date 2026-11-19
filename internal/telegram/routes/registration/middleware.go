@@ -10,7 +10,6 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"utmn-events-bot/internal/fsm"
-	"utmn-events-bot/internal/telegram/handlers"
 )
 
 func (h *Handler) RequireRegistered(next bot.HandlerFunc) bot.HandlerFunc {
@@ -47,7 +46,7 @@ func (h *Handler) RequireRegistered(next bot.HandlerFunc) bot.HandlerFunc {
 			h.send(ctx, b, update, message.Chat.ID, page)
 			return
 		}
-		if update.Message != nil && handlers.Command(update.Message.Text) == "/start" {
+		if update.Message != nil && command(update.Message.Text) == "/start" {
 			if !registered {
 				h.Start(ctx, b, update)
 			} else if h.service.inState(user.ID, fsm.Idle) {
@@ -81,4 +80,13 @@ func (h *Handler) RequireRegistered(next bot.HandlerFunc) bot.HandlerFunc {
 		}
 		next(ctx, b, update)
 	}
+}
+
+func command(text string) string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return ""
+	}
+	name, _, _ := strings.Cut(words[0], "@")
+	return name
 }

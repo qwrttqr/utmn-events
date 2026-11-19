@@ -36,37 +36,10 @@ type eventDraft struct {
 	keyboards.TokenizedDraft
 }
 
-type editingStatus uint8
-
-const (
-	stepStarted editingStatus = iota + 1
-	noActiveDraft
-	editingCancelled
-	eventUpdated
-	eventMissing
-	stepAlreadyCompleted
-	textRequired
-	invalidTitle
-	descriptionTooLong
-	photoRequired
-	locationTooLong
-	invalidDateFormat
-	startMustBeFuture
-	endMustFollowStart
-	invalidCapacity
-	tagsTooLong
-	invalidTag
-	invalidTagCount
-	saveFailed
-	startExpired
-	staleAction
-	capacityBelowRegistrations
-)
-
 type editingResult struct {
-	state  fsm.StateID
-	draft  eventDraft
-	status editingStatus
+	state   fsm.StateID
+	draft   eventDraft
+	message string
 }
 
 type EventEditingService struct {
@@ -94,229 +67,205 @@ func cloneDraft(d eventDraft) eventDraft {
 	return d
 }
 
-func (f *EventEditingService) completeStep(userID int64, state fsm.StateID, d eventDraft) editingResult {
-	if state == eventStart {
-		state = eventEnd
-	} else {
-		state = eventPreview
-	}
-	d = f.replaceDraft(userID, state, d)
-	return editingResult{state: state, draft: d, status: stepStarted}
-}
-
-func (f *EventEditingService) cancelForm(userID int64, token string) editingResult {
+func (f *EventEditingService) cancelForm(userID int64, token string) (editingResult, bool) {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
+		return editingResult{state: fsm.Idle}, false
 	}
 	if !d.IsTokenValid(token) {
-		return editingResult{state: state, draft: d, status: staleAction}
+		return editingResult{state: state, draft: d, message: "Эта кнопка устарела."}, false
 	}
 
 	f.machine.Clear(userID)
-	return editingResult{status: editingCancelled}
+	return editingResult{state: fsm.Idle}, true
 }
 
 func (f *EventEditingService) setTitle(userID int64, text string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
-	}
-	if state != eventTitle {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return editingResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return editingResult{state: state, draft: d, status: textRequired}
+		return editingResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	if utf8.RuneCountInString(text) > 200 || strings.ContainsAny(text, "\r\n") {
-		return editingResult{state: state, draft: d, status: invalidTitle}
+		return editingResult{state: state, draft: d, message: "Название должно быть в одну строку, до 200 символов."}
 	}
 	d.event.Title = text
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) setDescription(userID int64, text string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
-	}
-	if state != eventDescription {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return editingResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return editingResult{state: state, draft: d, status: textRequired}
+		return editingResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	if utf8.RuneCountInString(text) > 2000 {
-		return editingResult{state: state, draft: d, status: descriptionTooLong}
+		return editingResult{state: state, draft: d, message: "Описание должно быть не длиннее 2000 символов."}
 	}
 	d.event.Description = text
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) skipDescription(userID int64, token string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
+		return editingResult{state: fsm.Idle}
 	}
-	if state != eventDescription || !d.IsTokenValid(token) {
-		return editingResult{state: state, draft: d, status: staleAction}
+	if !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, message: "Эта кнопка устарела."}
 	}
 
 	d.event.Description = ""
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) setPhoto(userID int64, photo string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
-	}
-	if state != eventPhoto {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return editingResult{state: fsm.Idle}
 	}
 
 	if photo == "" {
-		return editingResult{state: state, draft: d, status: photoRequired}
+		return editingResult{state: state, draft: d, message: "Отправьте изображение как фото или нажмите «Пропустить»."}
 	}
 	d.event.PhotoFileID = photo
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) skipPhoto(userID int64, token string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
+		return editingResult{state: fsm.Idle}
 	}
-	if state != eventPhoto || !d.IsTokenValid(token) {
-		return editingResult{state: state, draft: d, status: staleAction}
+	if !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, message: "Эта кнопка устарела."}
 	}
 
 	d.event.PhotoFileID = ""
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) setLocation(userID int64, text string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
-	}
-	if state != eventLocation {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return editingResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return editingResult{state: state, draft: d, status: textRequired}
+		return editingResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	if utf8.RuneCountInString(text) > 300 {
-		return editingResult{state: state, draft: d, status: locationTooLong}
+		return editingResult{state: state, draft: d, message: "Место должно быть не длиннее 300 символов."}
 	}
 	d.event.Location = text
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) setStart(userID int64, text string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
-	}
-	if state != eventStart {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return editingResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return editingResult{state: state, draft: d, status: textRequired}
+		return editingResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	value, err := time.ParseInLocation(eventDateLayout, text, f.location)
 	if err != nil {
-		return editingResult{state: state, draft: d, status: invalidDateFormat}
+		return editingResult{state: state, draft: d, message: "Используйте формат ДД.ММ.ГГГГ ЧЧ:ММ."}
 	}
 	if !value.After(f.now()) {
-		return editingResult{state: state, draft: d, status: startMustBeFuture}
+		return editingResult{state: state, draft: d, message: "Начало должно быть в будущем."}
 	}
 	d.event.StartsAt = value.UTC()
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventEnd, d)
+	return editingResult{state: eventEnd, draft: d}
 }
 
 func (f *EventEditingService) setEnd(userID int64, text string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
-	}
-	if state != eventEnd {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return editingResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return editingResult{state: state, draft: d, status: textRequired}
+		return editingResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	value, err := time.ParseInLocation(eventDateLayout, text, f.location)
 	if err != nil {
-		return editingResult{state: state, draft: d, status: invalidDateFormat}
+		return editingResult{state: state, draft: d, message: "Используйте формат ДД.ММ.ГГГГ ЧЧ:ММ."}
 	}
 	if !value.After(d.event.StartsAt) {
-		return editingResult{state: state, draft: d, status: endMustFollowStart}
+		return editingResult{state: state, draft: d, message: "Окончание должно быть позже начала."}
 	}
 	d.event.EndsAt = value.UTC()
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) setCapacity(userID int64, text string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
-	}
-	if state != eventCapacity {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return editingResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return editingResult{state: state, draft: d, status: textRequired}
+		return editingResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	value, err := strconv.ParseInt(text, 10, 32)
 	if err != nil || value <= 0 {
-		return editingResult{state: state, draft: d, status: invalidCapacity}
+		return editingResult{state: state, draft: d, message: "Введите положительное целое число или нажмите «Без ограничений»."}
 	}
 	capacity := int32(value)
 	d.event.Capacity = &capacity
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) unlimitedCapacity(userID int64, token string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
+		return editingResult{state: fsm.Idle}
 	}
-	if state != eventCapacity || !d.IsTokenValid(token) {
-		return editingResult{state: state, draft: d, status: staleAction}
+	if !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, message: "Эта кнопка устарела."}
 	}
 
 	d.event.Capacity = nil
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) setTags(userID int64, text string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
-	}
-	if state != eventTags {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+		return editingResult{state: fsm.Idle}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" || strings.HasPrefix(text, "/") {
-		return editingResult{state: state, draft: d, status: textRequired}
+		return editingResult{state: state, draft: d, message: "Отправьте текст для текущего шага."}
 	}
 
 	if utf8.RuneCountInString(text) > 400 {
-		return editingResult{state: state, draft: d, status: tagsTooLong}
+		return editingResult{state: state, draft: d, message: "Список тегов должен быть не длиннее 400 символов."}
 	}
 	seen := make(map[string]bool)
 	var tags []string
@@ -326,38 +275,40 @@ func (f *EventEditingService) setTags(userID int64, text string) editingResult {
 			continue
 		}
 		if utf8.RuneCountInString(tag) > 40 || strings.ContainsAny(tag, "\r\n") {
-			return editingResult{state: state, draft: d, status: invalidTag}
+			return editingResult{state: state, draft: d, message: "Каждый тег должен быть в одну строку, до 40 символов."}
 		}
 		seen[tag] = true
 		tags = append(tags, tag)
 	}
 	if len(tags) == 0 || len(tags) > 10 {
-		return editingResult{state: state, draft: d, status: invalidTagCount}
+		return editingResult{state: state, draft: d, message: "Введите от 1 до 10 тегов или нажмите «Пропустить»."}
 	}
 	d.event.Tags = tags
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) skipTags(userID int64, token string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
+		return editingResult{state: fsm.Idle}
 	}
-	if state != eventTags || !d.IsTokenValid(token) {
-		return editingResult{state: state, draft: d, status: staleAction}
+	if !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, message: "Эта кнопка устарела."}
 	}
 
 	d.event.Tags = nil
-	return f.completeStep(userID, state, d)
+	d = f.replaceDraft(userID, eventPreview, d)
+	return editingResult{state: eventPreview, draft: d}
 }
 
 func (f *EventEditingService) confirmEvent(ctx context.Context, userID int64, token string) (editingResult, error) {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}, nil
+		return editingResult{state: fsm.Idle}, nil
 	}
-	if state != eventPreview || !d.IsTokenValid(token) {
-		return editingResult{state: state, draft: d, status: staleAction}, nil
+	if !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, message: "Эта кнопка устарела."}, nil
 	}
 
 	if d.updateField == domain.EventDates && !d.event.StartsAt.After(f.now()) {
@@ -368,23 +319,23 @@ func (f *EventEditingService) confirmEvent(ctx context.Context, userID int64, to
 		return f.reenterDates(userID, d), nil
 	}
 	if errors.Is(err, domain.ErrCapacityBelowRegistrations) {
-		return editingResult{state: state, draft: d, status: capacityBelowRegistrations}, nil
+		return editingResult{state: state, draft: d, message: "Количество мест не может быть меньше числа зарегистрированных участников."}, nil
 	}
 	if errors.Is(err, domain.ErrEventNotFound) {
 		f.machine.Clear(userID)
-		return editingResult{status: eventMissing}, nil
+		return editingResult{state: fsm.Idle}, err
 	}
 	if err != nil {
-		return editingResult{state: state, draft: d, status: saveFailed}, fmt.Errorf("save event: %w", err)
+		return editingResult{state: state, draft: d, message: "Не удалось сохранить мероприятие. Нажмите «Сохранить» ещё раз."}, fmt.Errorf("save event: %w", err)
 	}
 	f.machine.Clear(userID)
-	return editingResult{status: eventUpdated, draft: d}, nil
+	return editingResult{state: fsm.Idle, draft: d}, nil
 }
 
 func (f *EventEditingService) reenterDates(userID int64, d eventDraft) editingResult {
 	state := eventStart
 	d = f.replaceDraft(userID, state, d)
-	return editingResult{state: state, draft: d, status: startExpired}
+	return editingResult{state: state, draft: d, message: "Время начала уже прошло. Введите новую дату и время."}
 }
 
 func (f *EventEditingService) beginEdit(userID int64, event domain.Event, field domain.EventField) (editingResult, error) {
@@ -401,7 +352,7 @@ func (f *EventEditingService) beginEdit(userID int64, event domain.Event, field 
 		return editingResult{}, errors.New("event service is not configured")
 	}
 	d := f.replaceDraft(userID, step, cloneDraft(eventDraft{event: event, updateField: field}))
-	return editingResult{state: step, draft: d, status: stepStarted}, nil
+	return editingResult{state: step, draft: d}, nil
 }
 
 func (f *EventEditingService) restore(userID int64, state fsm.StateID, saved eventDraft) eventDraft {
@@ -417,9 +368,9 @@ func (f *EventEditingService) replaceDraft(userID int64, state fsm.StateID, d ev
 func (f *EventEditingService) staleCallback(userID int64) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
-		return editingResult{status: noActiveDraft}
+		return editingResult{state: fsm.Idle}
 	}
-	return editingResult{state: state, draft: d, status: staleAction}
+	return editingResult{state: state, draft: d, message: "Эта кнопка устарела."}
 }
 
 type Repository interface {

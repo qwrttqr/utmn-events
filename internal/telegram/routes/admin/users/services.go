@@ -34,6 +34,12 @@ type UsersService struct {
 	adminIDs []int64
 }
 
+const (
+	usersList      fsm.StateID = "admin.users.list"
+	usersDetails   fsm.StateID = "admin.users.details"
+	usersPromotion fsm.StateID = "admin.users.promotion"
+)
+
 func NewService(machine *fsm.FSM, repo Repository, adminIDs []int64) *UsersService {
 	return &UsersService{machine: machine, repo: repo, adminIDs: slices.Clone(adminIDs)}
 }
@@ -90,9 +96,3 @@ func (f *UsersService) selection(userID int64, token string, expected fsm.StateI
 	state, selected, exists := fsm.GetDraft[userSelection](f.machine, userID)
 	return selected, exists && state == expected && selected.token == token
 }
-
-const (
-	usersList      fsm.StateID = "admin.users.list"
-	usersDetails   fsm.StateID = "admin.users.details"
-	usersPromotion fsm.StateID = "admin.users.promotion"
-)

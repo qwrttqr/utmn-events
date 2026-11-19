@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strconv"
-	"strings"
 	"time"
 	_ "time/tzdata"
 
@@ -40,27 +38,14 @@ type session struct {
 	keyboards.TokenizedDraft
 }
 
-type managementStatus uint8
-
-const (
-	managementExpired managementStatus = iota + 1
-	managementDeleted
-)
-
 type managementResult struct {
 	state    fsm.StateID
 	session  session
-	status   managementStatus
 	event    domain.Event
 	events   []domain.EventSummary
 	users    []domain.User
 	more     bool
 	location *time.Location
-}
-
-type editRequest struct {
-	event domain.Event
-	field domain.EventField
 }
 
 type Service struct {
@@ -90,73 +75,56 @@ func (f *Service) Cancel(id int64) {
 	}
 }
 
-func (f *Service) process(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	if callback == "admin:events" {
-		return f.loadAndSave(ctx, userID, list, session{})
-	}
+func (f *Service) begin(ctx context.Context, userID int64) (managementResult, error) {
+	return f.loadAndSave(ctx, userID, list, session{})
+}
 
-	expired := managementResult{status: managementExpired}
-	callback, token, ok := keyboards.ParseScreenCallback(callback)
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-	if !ok || !exists || !s.IsTokenValid(token) {
-		return expired, nil, nil
-	}
-	data, ok := strings.CutPrefix(callback, callbackPrefix)
-	if !ok {
-		return expired, nil, nil
-	}
-	id, action, ok := strings.Cut(data, ":")
-	eventID, err := strconv.ParseInt(id, 10, 64)
-	if !ok || err != nil || eventID < 0 || strings.Contains(action, ":") {
-		return expired, nil, nil
-	}
-	selectedEvent := eventID > 0 && eventID == s.eventID
-
-	switch {
-	case strings.HasPrefix(action, "page") && ((state == list && eventID == 0) || (state == participants && selectedEvent)):
-		if nextPage, ok := pagination.Move(s.page, action); ok {
-			s.page = nextPage
-		}
-	case action == "open" && state == list && eventID > 0:
-		s.eventID, state = eventID, card
-	case action == "edit" && state == card && selectedEvent:
-		state = fields
-	case action == "participants" && state == card && selectedEvent:
-		state, s.page = participants, 0
-	case strings.HasPrefix(action, "field") && state == fields && selectedEvent:
-		field := domain.EventField(strings.TrimPrefix(action, "field"))
-		if !validField(field) {
-			return managementResult{}, nil, errors.New("invalid event field")
-		}
-		event, err := f.repo.Get(ctx, eventID)
-		if err != nil {
-			return managementResult{}, nil, err
-		}
-		return managementResult{}, &editRequest{event, field}, nil
-	case action == "delete" && state == card && selectedEvent:
-		state = confirmDelete
-	case action == "keep" && state == confirmDelete && selectedEvent:
-		state = card
-	case action == "confirm" && state == confirmDelete && selectedEvent:
-		if err := f.repo.Delete(ctx, eventID); err != nil {
-			return managementResult{}, nil, err
-		}
-		f.machine.Clear(userID)
-		return managementResult{status: managementDeleted}, nil, nil
-	default:
-		return expired, nil, nil
-	}
+func (f *Service) changePage(ctx context.Context, userID int64, state fsm.StateID, s session, page int) (managementResult, error) {
+	s.page = page
 	return f.loadAndSave(ctx, userID, state, s)
 }
 
-func (f *Service) loadAndSave(ctx context.Context, userID int64, state fsm.StateID, s session) (managementResult, *editRequest, error) {
+func (f *Service) openEvent(ctx context.Context, userID int64, s session, eventID int64) (managementResult, error) {
+	s.eventID = eventID
+	return f.loadAndSave(ctx, userID, card, s)
+}
+
+func (f *Service) showFields(ctx context.Context, userID int64, s session) (managementResult, error) {
+	return f.loadAndSave(ctx, userID, fields, s)
+}
+
+func (f *Service) showParticipants(ctx context.Context, userID int64, s session) (managementResult, error) {
+	s.page = 0
+	return f.loadAndSave(ctx, userID, participants, s)
+}
+
+func (f *Service) eventForEdit(ctx context.Context, eventID int64, field domain.EventField) (domain.Event, error) {
+	if !validField(field) {
+		return domain.Event{}, errors.New("invalid event field")
+	}
+	return f.repo.Get(ctx, eventID)
+}
+
+func (f *Service) showDeleteConfirmation(ctx context.Context, userID int64, s session) (managementResult, error) {
+	return f.loadAndSave(ctx, userID, confirmDelete, s)
+}
+
+func (f *Service) deleteEvent(ctx context.Context, userID, eventID int64) error {
+	if err := f.repo.Delete(ctx, eventID); err != nil {
+		return err
+	}
+	f.machine.Clear(userID)
+	return nil
+}
+
+func (f *Service) loadAndSave(ctx context.Context, userID int64, state fsm.StateID, s session) (managementResult, error) {
 	s.RotateScreenToken()
 	result, err := f.loadPage(ctx, state, s)
 	if err != nil {
-		return managementResult{}, nil, err
+		return managementResult{}, err
 	}
 	f.machine.Replace(userID, state, s)
-	return result, nil, nil
+	return result, nil
 }
 
 func validField(field domain.EventField) bool {
@@ -205,9 +173,4 @@ func (f *Service) loadPage(ctx context.Context, state fsm.StateID, s session) (m
 		result.users = users
 	}
 	return result, nil
-}
-
-func (f *Service) restore(ctx context.Context, userID int64, state fsm.StateID, s session) (managementResult, error) {
-	result, _, err := f.loadAndSave(ctx, userID, state, s)
-	return result, err
 }

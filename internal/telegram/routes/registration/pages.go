@@ -22,12 +22,6 @@ func saveErrorPage(d draft) navigation.Page {
 	return page
 }
 
-func invalidNamePage(state fsm.StateID, d draft) navigation.Page {
-	page := promptPage(state, d)
-	page.Text = "Введите от 1 до 100 символов без команд и переносов строк.\n\n" + page.Text
-	return page
-}
-
 func promptPage(state fsm.StateID, d draft) navigation.Page {
 	switch state {
 	case firstName:

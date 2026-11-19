@@ -2,15 +2,17 @@ package eventcreation
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
-	"utmn-events-bot/internal/telegram/handlers"
+	"utmn-events-bot/internal/telegram/filters"
 	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/navigation"
+	adminmenu "utmn-events-bot/internal/telegram/routes/admin/menu"
 )
 
 type Handler struct {
@@ -27,20 +29,48 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *EventCreatio
 
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:create_event", bot.MatchTypeExact, handler.Begin, guard)
 
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, eventTitle), handler.Title, guard)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, eventDescription), handler.Description, guard)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, eventPhoto), handler.Photo, guard)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, eventLocation), handler.Location, guard)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, eventStart), handler.Start, guard)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, eventEnd), handler.End, guard)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, eventCapacity), handler.Capacity, guard)
-	b.RegisterHandlerMatchFunc(handlers.InState(service.machine, eventTags), handler.Tags, guard)
-	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:skip_description"), handler.SkipDescription, guard)
-	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:skip_photo"), handler.SkipPhoto, guard)
-	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:unlimited_capacity"), handler.UnlimitedCapacity, guard)
-	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:skip_tags"), handler.SkipTags, guard)
-	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:save"), handler.Save, guard)
-	b.RegisterHandlerMatchFunc(keyboards.MatchScreenAction("admin:event:cancel"), handler.Cancel, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, eventTitle)
+	}, handler.Title, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, eventDescription)
+	}, handler.Description, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, eventPhoto)
+	}, handler.Photo, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, eventLocation)
+	}, handler.Location, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, eventStart)
+	}, handler.Start, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, eventEnd)
+	}, handler.End, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, eventCapacity)
+	}, handler.Capacity, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchState(update, service.machine, eventTags)
+	}, handler.Tags, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("admin:event:skip_description"))
+	}, handler.SkipDescription, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("admin:event:skip_photo"))
+	}, handler.SkipPhoto, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("admin:event:unlimited_capacity"))
+	}, handler.UnlimitedCapacity, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("admin:event:skip_tags"))
+	}, handler.SkipTags, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("admin:event:save"))
+	}, handler.Save, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix("admin:event:cancel"))
+	}, handler.Cancel, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:event:", bot.MatchTypePrefix, handler.StaleCallback, guard)
 }
 
@@ -212,6 +242,11 @@ func (f *Handler) Save(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if err != nil {
 		slog.ErrorContext(ctx, "event save failed", "user_id", query.From.ID, "error", err)
 	}
+	if result.eventID > 0 {
+		page := creationResultPage(fmt.Sprintf("Мероприятие «%s» (№%d) создано.", result.draft.event.Title, result.eventID))
+		f.showPage(ctx, b, update, query.Message.Message.Chat.ID, page)
+		return
+	}
 	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
@@ -225,7 +260,11 @@ func (f *Handler) Cancel(ctx context.Context, b *bot.Bot, update *models.Update)
 		return
 	}
 	_, token, _ := keyboards.ParseScreenCallback(query.Data)
-	result := f.service.cancelForm(query.From.ID, token)
+	result, cancelled := f.service.cancelForm(query.From.ID, token)
+	if cancelled {
+		f.showPage(ctx, b, update, query.Message.Message.Chat.ID, adminmenu.GetMainPage())
+		return
+	}
 	f.show(ctx, b, update, query.From.ID, query.Message.Message.Chat.ID, result)
 }
 
@@ -249,7 +288,11 @@ func answerEventCallback(ctx context.Context, b *bot.Bot, id string) {
 }
 
 func (f *Handler) show(ctx context.Context, b *bot.Bot, update *models.Update, userID, chatID int64, result creationResult) {
-	if err := f.navigator.Show(ctx, b, update, chatID, f.getPage(userID, result)); err != nil {
+	f.showPage(ctx, b, update, chatID, f.getPage(userID, result))
+}
+
+func (f *Handler) showPage(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, page navigation.Page) {
+	if err := f.navigator.Show(ctx, b, update, chatID, page); err != nil {
 		slog.ErrorContext(ctx, "show event screen failed", "error", err)
 	}
 }

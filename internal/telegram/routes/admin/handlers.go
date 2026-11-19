@@ -19,7 +19,7 @@ func Register(
 	navigator *navigation.Navigator,
 	isAdmin middleware.AdminChecker,
 	eventCreationService *eventcreation.EventCreationService,
-	tagsService *tags.TagsService,
+	tagsService *tags.Service,
 	managementService *eventmanagement.Service,
 	usersService *adminusers.UsersService,
 	announcementsService *announcements.Service,
