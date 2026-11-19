@@ -16,9 +16,6 @@ func expiredPage() navigation.Page {
 }
 
 func (h *Handler) getPage(userID int64, result listResult) navigation.Page {
-	if result.expired {
-		return expiredPage()
-	}
 	text := "Все пользователи"
 	if len(result.users) == 0 {
 		text += "\n\nСписок пуст."
@@ -47,7 +44,7 @@ func (h *Handler) userPage(userID int64, selected userSelection) navigation.Page
 	return navigation.Page{
 		Key:      "admin:users:details",
 		Text:     fmt.Sprintf("%s\nРоль: %s", userDetails(selected.target), role),
-		Keyboard: userKeyboard(selected.target, selected.token, h.service.adminIDs),
+		Keyboard: userKeyboard(selected.target, selected.Token, h.service.adminIDs),
 		Admin:    true,
 		Restore: func(ctx context.Context) (navigation.Page, error) {
 			dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -65,7 +62,7 @@ func promotionPage(draft userSelection, message string) navigation.Page {
 	return navigation.Page{
 		Key:          "admin:users:promotion",
 		Text:         message + "Выдать права администратора этому пользователю?\n\n" + userDetails(draft.target),
-		Keyboard:     promotionKeyboard(draft.token),
+		Keyboard:     promotionKeyboard(draft.Token),
 		Admin:        true,
 		NoNavigation: true,
 	}

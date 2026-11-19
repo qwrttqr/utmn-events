@@ -12,6 +12,9 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"utmn-events-bot/internal/domain"
+	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/filters"
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
@@ -26,17 +29,22 @@ func NewHandler(navigator *navigation.Navigator, service *UsersService) *Handler
 func Register(b *bot.Bot, navigator *navigation.Navigator, service *UsersService, guard bot.Middleware) {
 	h := NewHandler(navigator, service)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:users", bot.MatchTypeExact, h.List, guard)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, userPrefix, bot.MatchTypePrefix, h.User, guard)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, promotePrefix, bot.MatchTypePrefix, h.SelectPromotion, guard)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, confirmPrefix, bot.MatchTypePrefix, h.FinishPromotion, guard)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cancelPrefix, bot.MatchTypePrefix, h.FinishPromotion, guard)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		q := update.CallbackQuery
-		if q == nil {
-			return false
-		}
-		action, ok := strings.CutPrefix(q.Data, paginationPrefix)
-		return ok && strings.HasPrefix(action, "page") && !strings.Contains(action, ":")
+		return filters.MatchCallbackPrefix(update, userPrefix) &&
+			filters.MatchState(update, service.machine, usersList)
+	}, h.User, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix(promoteAction)) &&
+			filters.MatchState(update, service.machine, usersDetails)
+	}, h.SelectPromotion, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return (filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix(confirmAction)) ||
+			filters.MatchCallbackPrefix(update, keyboards.ScreenCallbackPrefix(cancelAction))) &&
+			filters.MatchState(update, service.machine, usersPromotion)
+	}, h.FinishPromotion, guard)
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return filters.MatchCallbackPrefix(update, pagePrefix) &&
+			filters.MatchState(update, service.machine, usersList)
 	}, h.Page, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, paginationPrefix, bot.MatchTypePrefix, h.StaleCallback, guard)
 }
@@ -46,13 +54,15 @@ func (h *Handler) User(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if q == nil || q.Message.Message == nil {
 		return
 	}
-	targetID, err := strconv.ParseInt(strings.TrimPrefix(q.Data, userPrefix), 10, 64)
-	if err != nil {
+	action, token, ok := keyboards.ParseScreenCallback(q.Data)
+	current, exists := h.listDraft(q.From.ID, token)
+	targetID, err := strconv.ParseInt(strings.TrimPrefix(action, userPrefix), 10, 64)
+	if !ok || !exists || err != nil || targetID <= 0 {
 		answer(ctx, b, q.ID, "Эта кнопка устарела.")
 		return
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	selected, err := h.service.selectUser(dbCtx, q.From.ID, targetID)
+	selected, err := h.service.selectUser(dbCtx, q.From.ID, targetID, current)
 	cancel()
 	switch {
 	case errors.Is(err, domain.ErrUserNotRegistered):
@@ -60,7 +70,7 @@ func (h *Handler) User(ctx context.Context, b *bot.Bot, update *models.Update) {
 	case err != nil:
 		slog.ErrorContext(ctx, "load user details failed", "target_id", targetID, "error", err)
 		answer(ctx, b, q.ID, "Не удалось загрузить пользователя. Попробуйте ещё раз.")
-	case selected.token == "":
+	case selected.Token == "":
 		answer(ctx, b, q.ID, "Эта кнопка устарела.")
 	default:
 		answer(ctx, b, q.ID, "")
@@ -73,12 +83,13 @@ func (h *Handler) SelectPromotion(ctx context.Context, b *bot.Bot, update *model
 	if q == nil || q.Message.Message == nil {
 		return
 	}
-	draft, ok := h.service.selection(q.From.ID, strings.TrimPrefix(q.Data, promotePrefix), usersDetails)
-	if !ok || isAdmin(draft.target, h.service.adminIDs) {
+	_, token, parsed := keyboards.ParseScreenCallback(q.Data)
+	_, draft, exists := fsm.GetDraft[userSelection](h.service.machine, q.From.ID)
+	if !parsed || !exists || !draft.IsTokenValid(token) || isAdmin(draft.target, h.service.adminIDs) {
 		answer(ctx, b, q.ID, "Эта кнопка устарела.")
 		return
 	}
-	h.service.machine.Replace(q.From.ID, usersPromotion, draft)
+	draft = h.service.beginPromotion(q.From.ID, draft)
 	answer(ctx, b, q.ID, "")
 	h.show(ctx, b, update, promotionPage(draft, ""))
 }
@@ -88,15 +99,13 @@ func (h *Handler) FinishPromotion(ctx context.Context, b *bot.Bot, update *model
 	if q == nil || q.Message.Message == nil {
 		return
 	}
-	token, confirm := strings.CutPrefix(q.Data, confirmPrefix)
-	if !confirm {
-		token = strings.TrimPrefix(q.Data, cancelPrefix)
-	}
-	draft, ok := h.service.selection(q.From.ID, token, usersPromotion)
-	if !ok {
+	action, token, parsed := keyboards.ParseScreenCallback(q.Data)
+	_, draft, exists := fsm.GetDraft[userSelection](h.service.machine, q.From.ID)
+	if !parsed || !exists || !draft.IsTokenValid(token) {
 		answer(ctx, b, q.ID, "Эта кнопка устарела.")
 		return
 	}
+	confirm := action == confirmAction
 	answer(ctx, b, q.ID, "")
 	if !confirm {
 		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -153,14 +162,27 @@ func (h *Handler) Page(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if q == nil {
 		return
 	}
-	answer(ctx, b, q.ID, "")
 	if q.Message.Message == nil {
+		answer(ctx, b, q.ID, "")
 		return
 	}
+	action, token, parsed := keyboards.ParseScreenCallback(q.Data)
+	current, exists := h.listDraft(q.From.ID, token)
+	pageNumber, err := strconv.Atoi(strings.TrimPrefix(action, pagePrefix))
+	if !parsed || !exists || err != nil {
+		h.StaleCallback(ctx, b, update)
+		return
+	}
+	answer(ctx, b, q.ID, "")
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	result, err := h.service.page(dbCtx, q.From.ID, strings.TrimPrefix(q.Data, paginationPrefix))
+	result, err := h.service.page(dbCtx, q.From.ID, current, pageNumber)
 	cancel()
 	h.showList(ctx, b, update, result, err, "", q.Data)
+}
+
+func (h *Handler) listDraft(userID int64, token string) (listResult, bool) {
+	_, current, exists := fsm.GetDraft[listResult](h.service.machine, userID)
+	return current, exists && current.IsTokenValid(token)
 }
 
 func (h *Handler) showList(ctx context.Context, b *bot.Bot, update *models.Update, result listResult, err error, notice, retry string) {

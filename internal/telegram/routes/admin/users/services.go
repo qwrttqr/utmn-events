@@ -2,11 +2,11 @@ package users
 
 import (
 	"context"
-	"crypto/rand"
 	"slices"
 
 	"utmn-events-bot/internal/domain"
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/pagination"
 )
 
@@ -19,13 +19,13 @@ type Repository interface {
 type userSelection struct {
 	target     domain.User
 	pageNumber int
-	token      string
+	keyboards.TokenizedDraft
 }
 type listResult struct {
 	users      []domain.User
 	pageNumber int
 	more       bool
-	expired    bool
+	keyboards.TokenizedDraft
 }
 
 type UsersService struct {
@@ -44,12 +44,10 @@ func NewService(machine *fsm.FSM, repo Repository, adminIDs []int64) *UsersServi
 	return &UsersService{machine: machine, repo: repo, adminIDs: slices.Clone(adminIDs)}
 }
 
-func (f *UsersService) page(ctx context.Context, userID int64, action string) (listResult, error) {
-	state, current, exists := fsm.GetDraft[listResult](f.machine, userID)
-	if !exists || state != usersList {
-		return listResult{expired: true}, nil
+func (f *UsersService) page(ctx context.Context, userID int64, current listResult, pageNumber int) (listResult, error) {
+	if pageNumber < 0 || (pageNumber != current.pageNumber-1 && pageNumber != current.pageNumber+1) {
+		pageNumber = current.pageNumber
 	}
-	pageNumber, _ := pagination.Move(current.pageNumber, action)
 	return f.loadPage(ctx, userID, pageNumber)
 }
 
@@ -65,15 +63,12 @@ func (f *UsersService) loadPage(ctx context.Context, userID int64, pageNumber in
 	}
 
 	result := listResult{users: users, pageNumber: pageNumber, more: more}
+	result.RotateScreenToken()
 	f.machine.Replace(userID, usersList, result)
 	return result, nil
 }
 
-func (f *UsersService) selectUser(ctx context.Context, userID, targetID int64) (userSelection, error) {
-	state, current, exists := fsm.GetDraft[listResult](f.machine, userID)
-	if !exists || state != usersList {
-		return userSelection{}, nil
-	}
+func (f *UsersService) selectUser(ctx context.Context, userID, targetID int64, current listResult) (userSelection, error) {
 	for _, user := range current.users {
 		if user.TelegramID == targetID {
 			return f.loadUser(ctx, userID, targetID, current.pageNumber)
@@ -87,12 +82,14 @@ func (f *UsersService) loadUser(ctx context.Context, userID, targetID int64, pag
 	if err != nil {
 		return userSelection{}, err
 	}
-	selection := userSelection{target: user, pageNumber: pageNumber, token: rand.Text()}
+	selection := userSelection{target: user, pageNumber: pageNumber}
+	selection.RotateScreenToken()
 	f.machine.Replace(userID, usersDetails, selection)
 	return selection, nil
 }
 
-func (f *UsersService) selection(userID int64, token string, expected fsm.StateID) (userSelection, bool) {
-	state, selected, exists := fsm.GetDraft[userSelection](f.machine, userID)
-	return selected, exists && state == expected && selected.token == token
+func (f *UsersService) beginPromotion(userID int64, selection userSelection) userSelection {
+	selection.RotateScreenToken()
+	f.machine.Replace(userID, usersPromotion, selection)
+	return selection
 }
