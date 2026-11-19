@@ -1,0 +1,56 @@
+package menu
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
+
+	"utmn-events-bot/internal/telegram/middleware"
+	"utmn-events-bot/internal/telegram/navigation"
+)
+
+type Handler struct {
+	navigator  *navigation.Navigator
+	isAdmin    middleware.AdminChecker
+	beforeOpen func(int64)
+}
+
+func Register(b *bot.Bot, navigator *navigation.Navigator, beforeOpen func(int64), isAdmin middleware.AdminChecker) {
+	h := &Handler{navigator: navigator, beforeOpen: beforeOpen, isAdmin: isAdmin}
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "user:menu", bot.MatchTypeExact, h.Menu)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "home:menu", bot.MatchTypeExact, h.Home)
+}
+func (h *Handler) Menu(ctx context.Context, b *bot.Bot, update *models.Update) {
+	q := update.CallbackQuery
+	if q == nil {
+		return
+	}
+	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: q.ID}); err != nil {
+		slog.ErrorContext(ctx, "answer menu callback failed", "error", err)
+	}
+	if q.Message.Message == nil {
+		return
+	}
+	h.beforeOpen(q.From.ID)
+	if err := h.navigator.Show(ctx, b, update, q.Message.Message.Chat.ID, GetMainPage(h.isAdmin(ctx, q.From.ID))); err != nil {
+		slog.ErrorContext(ctx, "show user menu failed", "error", err)
+	}
+}
+func (h *Handler) Home(ctx context.Context, b *bot.Bot, update *models.Update) {
+	q := update.CallbackQuery
+	if q == nil {
+		return
+	}
+	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: q.ID}); err != nil {
+		slog.ErrorContext(ctx, "answer menu callback failed", "error", err)
+	}
+	if q.Message.Message == nil {
+		return
+	}
+	h.beforeOpen(q.From.ID)
+	if err := h.navigator.ShowHome(ctx, b, update, q.Message.Message.Chat.ID); err != nil {
+		slog.ErrorContext(ctx, "show user menu failed", "error", err)
+	}
+}
