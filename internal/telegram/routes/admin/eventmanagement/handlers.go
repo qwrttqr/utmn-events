@@ -115,16 +115,16 @@ func (h *Handler) withClick(action func(context.Context, context.Context, *bot.B
 		if !answerManagementCallback(ctx, b, q) {
 			return
 		}
-		click, ok := extractEventInfo(q.Data)
+		eventInfo, ok := extractEventInfo(q.Data)
 		state, s, exists := fsm.GetDraft[session](h.service.machine, q.From.ID)
-		if !ok || !exists || !s.IsTokenValid(click.token) || !click.matchesEvent(state, s) {
+		if !ok || !exists || !s.IsTokenValid(eventInfo.token) || !eventInfo.matchesEvent(state, s) {
 			h.show(ctx, b, update, q.Message.Message.Chat.ID, expiredPage())
 			return
 		}
-		click.state, click.session = state, s
+		eventInfo.state, eventInfo.session = state, s
 		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		action(ctx, dbCtx, b, update, click)
+		action(ctx, dbCtx, b, update, eventInfo)
 	}
 }
 
