@@ -20,7 +20,7 @@ func Register(
 	isAdmin middleware.AdminChecker,
 	eventCreationService *eventcreation.EventCreationService,
 	tagsService *tags.TagsService,
-	managementService *eventmanagement.EventManagementService,
+	managementService *eventmanagement.Service,
 	usersService *adminusers.UsersService,
 	announcementsService *announcements.Service,
 	eventEditingService *eventediting.EventEditingService,

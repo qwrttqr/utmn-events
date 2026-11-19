@@ -24,6 +24,7 @@ func NewHandler(navigator *navigation.Navigator, service *TagsService) *Handler 
 func Register(b *bot.Bot, navigator *navigation.Navigator, service *TagsService, guard bot.Middleware) {
 	h := NewHandler(navigator, service)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:tags", bot.MatchTypeExact, h.List, guard)
+
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		if q == nil || !strings.HasPrefix(q.Data, "admin:tag:") {
@@ -32,6 +33,7 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *TagsService,
 		parts := strings.Split(q.Data, ":")
 		return len(parts) == 4 && (parts[3] == "create")
 	}, h.Create, guard)
+
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		if q == nil || !strings.HasPrefix(q.Data, "admin:tag:") {
@@ -40,6 +42,7 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *TagsService,
 		parts := strings.Split(q.Data, ":")
 		return len(parts) == 4 && (parts[3] == "assign")
 	}, h.Assign, guard)
+
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		if q == nil || !strings.HasPrefix(q.Data, "admin:tag:") {
@@ -48,6 +51,7 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *TagsService,
 		parts := strings.Split(q.Data, ":")
 		return len(parts) == 4 && (strings.HasPrefix(parts[3], "page"))
 	}, h.Page, guard)
+
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		if q == nil || !strings.HasPrefix(q.Data, "admin:tag:") {
@@ -56,6 +60,7 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *TagsService,
 		parts := strings.Split(q.Data, ":")
 		return len(parts) == 4 && (strings.HasPrefix(parts[3], "event"))
 	}, h.SelectEvent, guard)
+
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		if q == nil || !strings.HasPrefix(q.Data, "admin:tag:") {
@@ -64,6 +69,7 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *TagsService,
 		parts := strings.Split(q.Data, ":")
 		return len(parts) == 4 && (strings.HasPrefix(parts[3], "toggle"))
 	}, h.ToggleTag, guard)
+
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		if q == nil || !strings.HasPrefix(q.Data, "admin:tag:") {
@@ -72,6 +78,7 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *TagsService,
 		parts := strings.Split(q.Data, ":")
 		return len(parts) == 4 && (parts[3] == "clear")
 	}, h.ClearTags, guard)
+
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
 		if q == nil || !strings.HasPrefix(q.Data, "admin:tag:") {
@@ -80,6 +87,7 @@ func Register(b *bot.Bot, navigator *navigation.Navigator, service *TagsService,
 		parts := strings.Split(q.Data, ":")
 		return len(parts) == 4 && (parts[3] == "save")
 	}, h.Save, guard)
+
 	b.RegisterHandlerMatchFunc(handlers.MatchMessageFrom(service.enteringName), h.Name, guard)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "admin:tag:", bot.MatchTypePrefix, h.StaleCallback, guard)
 }

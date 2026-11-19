@@ -2,7 +2,6 @@ package announcements
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"log/slog"
 	"strings"
@@ -89,7 +88,7 @@ func (s *Service) begin(userID int64) announcementResult {
 		return announcementResult{status: broadcastInProgress}
 	}
 	d := draft{}
-	d.SetScreenToken(rand.Text())
+	d.RotateScreenToken()
 	s.machine.Replace(userID, enterTextState, d)
 	return announcementResult{state: enterTextState, draft: d}
 }
@@ -111,7 +110,7 @@ func (s *Service) setText(userID int64, text string) announcementResult {
 		return announcementResult{state: state, draft: d, status: announcementTooLong}
 	}
 	d.text, state = text, previewState
-	d.SetScreenToken(rand.Text())
+	d.RotateScreenToken()
 	s.machine.Replace(userID, state, d)
 	return announcementResult{state: state, draft: d}
 }
@@ -122,7 +121,7 @@ func (s *Service) edit(userID int64, token string) announcementResult {
 		return announcementResult{status: announcementStale}
 	}
 	state = enterTextState
-	d.SetScreenToken(rand.Text())
+	d.RotateScreenToken()
 	s.machine.Replace(userID, state, d)
 	return announcementResult{state: state, draft: d}
 }

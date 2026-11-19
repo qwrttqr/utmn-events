@@ -20,18 +20,19 @@ type Editor interface {
 
 type Handler struct {
 	navigator *navigation.Navigator
-	service   *EventManagementService
+	service   *Service
 	editor    Editor
 }
 
-func NewHandler(navigator *navigation.Navigator, service *EventManagementService, editor Editor) *Handler {
+func NewHandler(navigator *navigation.Navigator, service *Service, editor Editor) *Handler {
 	return &Handler{navigator: navigator, service: service, editor: editor}
 }
-func Register(b *bot.Bot, navigator *navigation.Navigator, service *EventManagementService, editor Editor, guard bot.Middleware) {
+func Register(b *bot.Bot, navigator *navigation.Navigator, service *Service, editor Editor, guard bot.Middleware) {
 	h := NewHandler(navigator, service, editor)
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		q := update.CallbackQuery
-		return q != nil && (q.Data == "admin:events" || strings.HasPrefix(q.Data, callbackPrefix))
+		return q != nil && (q.Data == "admin:events" ||
+			strings.HasPrefix(q.Data, callbackPrefix) || strings.HasPrefix(q.Data, "admin:manage:"))
 	}, h.handleCallback, guard)
 }
 

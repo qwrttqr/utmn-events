@@ -3,7 +3,6 @@ package eventmanagement
 import (
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/go-telegram/bot/models"
 
@@ -11,23 +10,10 @@ import (
 	"utmn-events-bot/internal/telegram/pagination"
 )
 
-const callbackPrefix = "admin:manage:"
+const callbackPrefix = "em:"
 
 func manageCallback(eventID int64, action string) string {
 	return callbackPrefix + strconv.FormatInt(eventID, 10) + ":" + action
-}
-
-func parseCallback(callback string) (int64, string, bool) {
-	data, ok := strings.CutPrefix(callback, callbackPrefix)
-	if !ok {
-		return 0, "", false
-	}
-	id, action, ok := strings.Cut(data, ":")
-	if !ok || action == "" || strings.Contains(action, ":") {
-		return 0, "", false
-	}
-	eventID, err := strconv.ParseInt(id, 10, 64)
-	return eventID, action, err == nil && eventID >= 0
 }
 
 func retryKeyboard(callback string) *models.InlineKeyboardMarkup {

@@ -1,6 +1,7 @@
 package keyboards
 
 import (
+	"crypto/rand"
 	"strings"
 
 	"github.com/go-telegram/bot/models"
@@ -17,8 +18,8 @@ type TokenizedDraft struct {
 	Token string
 }
 
-func (d *TokenizedDraft) SetScreenToken(token string) {
-	d.Token = token
+func (d *TokenizedDraft) RotateScreenToken() {
+	d.Token = rand.Text()[:12]
 }
 
 func (d TokenizedDraft) IsTokenValid(clickedToken string) bool {

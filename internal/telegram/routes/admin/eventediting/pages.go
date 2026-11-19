@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/navigation"
 	adminmenu "utmn-events-bot/internal/telegram/routes/admin/menu"
 )
@@ -65,6 +66,7 @@ func (h *Handler) getPage(userID int64, result editingResult) navigation.Page {
 	}
 
 	page := h.prompt(result.state, result.draft)
+	page.Keyboard = keyboards.WithScreenToken(page.Keyboard, result.draft.Token)
 	page.Key = "admin:event_edit:" + string(result.state)
 	page.Admin = true
 	if message != "" {
@@ -74,8 +76,8 @@ func (h *Handler) getPage(userID int64, result editingResult) navigation.Page {
 
 	state, saved := result.state, cloneDraft(result.draft)
 	page.Restore = func(context.Context) (navigation.Page, error) {
-		h.service.restore(userID, state, saved)
-		return h.getPage(userID, editingResult{state: state, draft: saved}), nil
+		restored := h.service.restore(userID, state, saved)
+		return h.getPage(userID, editingResult{state: state, draft: restored}), nil
 	}
 	return page
 }
@@ -130,7 +132,7 @@ func (h *Handler) endPrompt(d eventDraft) navigation.Page {
 }
 
 func (h *Handler) capacityPrompt() navigation.Page {
-	return navigation.Page{Text: "Введите максимальное количество участников.", Keyboard: eventKeyboard(eventAction("Без ограничений", "unlimited_capacity"))}
+	return navigation.Page{Text: "Введите максимальное количество участников.", Keyboard: eventKeyboard(eventAction("Без ограничений", "unlimited"))}
 }
 
 func (h *Handler) tagsPrompt() navigation.Page {

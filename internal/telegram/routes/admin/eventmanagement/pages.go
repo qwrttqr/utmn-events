@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/navigation"
 )
 
@@ -61,6 +62,7 @@ func (h *Handler) getPage(userID int64, result managementResult) navigation.Page
 			page.Keyboard = deleteKeyboard(s)
 		}
 	}
+	page.Keyboard = keyboards.WithScreenToken(page.Keyboard, s.Token)
 	page.Restore = func(ctx context.Context) (navigation.Page, error) {
 		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()

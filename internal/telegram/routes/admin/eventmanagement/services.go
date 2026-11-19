@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata"
 
 	"utmn-events-bot/internal/domain"
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 	"utmn-events-bot/internal/telegram/pagination"
 )
 
@@ -35,6 +37,7 @@ const pageSize = pagination.Size
 type session struct {
 	page    int
 	eventID int64
+	keyboards.TokenizedDraft
 }
 
 type managementStatus uint8
@@ -60,7 +63,7 @@ type editRequest struct {
 	field domain.EventField
 }
 
-type EventManagementService struct {
+type Service struct {
 	machine  *fsm.FSM
 	repo     Repository
 	users    UserRepository
@@ -72,178 +75,82 @@ func NewService(
 	repo Repository,
 	users UserRepository,
 	adminIDs []int64,
-) *EventManagementService {
-	return &EventManagementService{
+) *Service {
+	return &Service{
 		machine:  machine,
 		repo:     repo,
 		users:    users,
 		adminIDs: slices.Clone(adminIDs),
 	}
 }
-func (f *EventManagementService) Cancel(id int64) {
+func (f *Service) Cancel(id int64) {
 	switch f.machine.CurrentState(id) {
 	case list, card, fields, confirmDelete, participants:
 		f.machine.Clear(id)
 	}
 }
 
-func (f *EventManagementService) process(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
+func (f *Service) process(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
 	if callback == "admin:events" {
-		return f.list(ctx, userID)
+		return f.loadAndSave(ctx, userID, list, session{})
 	}
-	_, action, ok := parseCallback(callback)
+
+	expired := managementResult{status: managementExpired}
+	callback, token, ok := keyboards.ParseScreenCallback(callback)
+	state, s, exists := fsm.GetDraft[session](f.machine, userID)
+	if !ok || !exists || !s.IsTokenValid(token) {
+		return expired, nil, nil
+	}
+	data, ok := strings.CutPrefix(callback, callbackPrefix)
 	if !ok {
-		return managementResult{status: managementExpired}, nil, nil
+		return expired, nil, nil
 	}
-	if strings.HasPrefix(action, "page") {
-		return f.page(ctx, userID, callback)
+	id, action, ok := strings.Cut(data, ":")
+	eventID, err := strconv.ParseInt(id, 10, 64)
+	if !ok || err != nil || eventID < 0 || strings.Contains(action, ":") {
+		return expired, nil, nil
 	}
-	if action == "open" {
-		return f.open(ctx, userID, callback)
-	}
-	if action == "edit" {
-		return f.edit(ctx, userID, callback)
-	}
-	if action == "participants" {
-		return f.participants(ctx, userID, callback)
-	}
-	if strings.HasPrefix(action, "field") {
-		return f.field(ctx, userID, callback)
-	}
-	if action == "delete" {
-		return f.delete(ctx, userID, callback)
-	}
-	if action == "keep" {
-		return f.keep(ctx, userID, callback)
-	}
-	if action == "confirm" {
-		return f.confirmDelete(ctx, userID, callback)
-	}
-	return managementResult{status: managementExpired}, nil, nil
-}
+	selectedEvent := eventID > 0 && eventID == s.eventID
 
-func (f *EventManagementService) page(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-
-	eventID, action, valid := parseCallback(callback)
-	listPage := state == list && eventID == 0
-	participantsPage := state == participants && eventID > 0 && eventID == s.eventID
-	if !exists || !valid || !strings.HasPrefix(action, "page") || (!listPage && !participantsPage) {
-		return managementResult{status: managementExpired}, nil, nil
+	switch {
+	case strings.HasPrefix(action, "page") && ((state == list && eventID == 0) || (state == participants && selectedEvent)):
+		if nextPage, ok := pagination.Move(s.page, action); ok {
+			s.page = nextPage
+		}
+	case action == "open" && state == list && eventID > 0:
+		s.eventID, state = eventID, card
+	case action == "edit" && state == card && selectedEvent:
+		state = fields
+	case action == "participants" && state == card && selectedEvent:
+		state, s.page = participants, 0
+	case strings.HasPrefix(action, "field") && state == fields && selectedEvent:
+		field := domain.EventField(strings.TrimPrefix(action, "field"))
+		if !validField(field) {
+			return managementResult{}, nil, errors.New("invalid event field")
+		}
+		event, err := f.repo.Get(ctx, eventID)
+		if err != nil {
+			return managementResult{}, nil, err
+		}
+		return managementResult{}, &editRequest{event, field}, nil
+	case action == "delete" && state == card && selectedEvent:
+		state = confirmDelete
+	case action == "keep" && state == confirmDelete && selectedEvent:
+		state = card
+	case action == "confirm" && state == confirmDelete && selectedEvent:
+		if err := f.repo.Delete(ctx, eventID); err != nil {
+			return managementResult{}, nil, err
+		}
+		f.machine.Clear(userID)
+		return managementResult{status: managementDeleted}, nil, nil
+	default:
+		return expired, nil, nil
 	}
-
-	if nextPage, ok := pagination.Move(s.page, action); ok {
-		s.page = nextPage
-	}
-
 	return f.loadAndSave(ctx, userID, state, s)
 }
 
-func (f *EventManagementService) open(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || state != list || action != "open" || eventID == 0 {
-		return managementResult{status: managementExpired}, nil, nil
-	}
-
-	s.eventID, state = eventID, card
-
-	return f.loadAndSave(ctx, userID, state, s)
-}
-
-func (f *EventManagementService) edit(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || state != card || action != "edit" || eventID <= 0 || eventID != s.eventID {
-		return managementResult{status: managementExpired}, nil, nil
-	}
-
-	state = fields
-
-	return f.loadAndSave(ctx, userID, state, s)
-}
-
-func (f *EventManagementService) participants(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || state != card || action != "participants" || eventID <= 0 || eventID != s.eventID {
-		return managementResult{status: managementExpired}, nil, nil
-	}
-
-	state, s.page = participants, 0
-
-	return f.loadAndSave(ctx, userID, state, s)
-}
-
-func (f *EventManagementService) field(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || state != fields || !strings.HasPrefix(action, "field") || eventID <= 0 || eventID != s.eventID {
-		return managementResult{status: managementExpired}, nil, nil
-	}
-
-	field := domain.EventField(strings.TrimPrefix(action, "field"))
-	if !validField(field) {
-		return managementResult{}, nil, errors.New("invalid event field")
-	}
-	event, err := f.repo.Get(ctx, eventID)
-	if err != nil {
-		return managementResult{}, nil, err
-	}
-	return managementResult{}, &editRequest{event, field}, nil
-}
-
-func (f *EventManagementService) delete(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || state != card || action != "delete" || eventID <= 0 || eventID != s.eventID {
-		return managementResult{status: managementExpired}, nil, nil
-	}
-
-	state = confirmDelete
-
-	return f.loadAndSave(ctx, userID, state, s)
-}
-
-func (f *EventManagementService) keep(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || state != confirmDelete || action != "keep" || eventID <= 0 || eventID != s.eventID {
-		return managementResult{status: managementExpired}, nil, nil
-	}
-
-	state = card
-
-	return f.loadAndSave(ctx, userID, state, s)
-}
-
-func (f *EventManagementService) confirmDelete(ctx context.Context, userID int64, callback string) (managementResult, *editRequest, error) {
-	state, s, exists := fsm.GetDraft[session](f.machine, userID)
-
-	eventID, action, valid := parseCallback(callback)
-	if !exists || !valid || state != confirmDelete || action != "confirm" || eventID <= 0 || eventID != s.eventID {
-		return managementResult{status: managementExpired}, nil, nil
-	}
-
-	if err := f.repo.Delete(ctx, eventID); err != nil {
-		return managementResult{}, nil, err
-	}
-	f.machine.Clear(userID)
-	return managementResult{status: managementDeleted}, nil, nil
-}
-
-func (f *EventManagementService) list(ctx context.Context, userID int64) (managementResult, *editRequest, error) {
-
-	return f.loadAndSave(ctx, userID, list, session{})
-}
-
-func (f *EventManagementService) loadAndSave(ctx context.Context, userID int64, state fsm.StateID, s session) (managementResult, *editRequest, error) {
+func (f *Service) loadAndSave(ctx context.Context, userID int64, state fsm.StateID, s session) (managementResult, *editRequest, error) {
+	s.RotateScreenToken()
 	result, err := f.loadPage(ctx, state, s)
 	if err != nil {
 		return managementResult{}, nil, err
@@ -260,7 +167,7 @@ func validField(field domain.EventField) bool {
 	return false
 }
 
-func (f *EventManagementService) loadPage(ctx context.Context, state fsm.StateID, s session) (managementResult, error) {
+func (f *Service) loadPage(ctx context.Context, state fsm.StateID, s session) (managementResult, error) {
 	result := managementResult{state: state, session: s}
 	if state == list {
 		events, err := f.repo.List(ctx, pageSize+1, s.page*pageSize)
@@ -300,7 +207,7 @@ func (f *EventManagementService) loadPage(ctx context.Context, state fsm.StateID
 	return result, nil
 }
 
-func (f *EventManagementService) restore(ctx context.Context, userID int64, state fsm.StateID, s session) (managementResult, error) {
+func (f *Service) restore(ctx context.Context, userID int64, state fsm.StateID, s session) (managementResult, error) {
 	result, _, err := f.loadAndSave(ctx, userID, state, s)
 	return result, err
 }

@@ -13,6 +13,7 @@ import (
 
 	"utmn-events-bot/internal/domain"
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 )
 
 const (
@@ -32,6 +33,7 @@ const eventDateLayout = "02.01.2006 15:04"
 type eventDraft struct {
 	event       domain.Event
 	updateField domain.EventField
+	keyboards.TokenizedDraft
 }
 
 type editingStatus uint8
@@ -98,14 +100,17 @@ func (f *EventEditingService) completeStep(userID int64, state fsm.StateID, d ev
 	} else {
 		state = eventPreview
 	}
-	f.machine.Replace(userID, state, d)
+	d = f.replaceDraft(userID, state, d)
 	return editingResult{state: state, draft: d, status: stepStarted}
 }
 
-func (f *EventEditingService) cancelForm(userID int64) editingResult {
-	_, _, exists := fsm.GetDraft[eventDraft](f.machine, userID)
+func (f *EventEditingService) cancelForm(userID int64, token string) editingResult {
+	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
+	}
+	if !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, status: staleAction}
 	}
 
 	f.machine.Clear(userID)
@@ -152,13 +157,13 @@ func (f *EventEditingService) setDescription(userID int64, text string) editingR
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventEditingService) skipDescription(userID int64) editingResult {
+func (f *EventEditingService) skipDescription(userID int64, token string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
-	if state != eventDescription {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+	if state != eventDescription || !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, status: staleAction}
 	}
 
 	d.event.Description = ""
@@ -181,13 +186,13 @@ func (f *EventEditingService) setPhoto(userID int64, photo string) editingResult
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventEditingService) skipPhoto(userID int64) editingResult {
+func (f *EventEditingService) skipPhoto(userID int64, token string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
-	if state != eventPhoto {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+	if state != eventPhoto || !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, status: staleAction}
 	}
 
 	d.event.PhotoFileID = ""
@@ -284,13 +289,13 @@ func (f *EventEditingService) setCapacity(userID int64, text string) editingResu
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventEditingService) unlimitedCapacity(userID int64) editingResult {
+func (f *EventEditingService) unlimitedCapacity(userID int64, token string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
-	if state != eventCapacity {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+	if state != eventCapacity || !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, status: staleAction}
 	}
 
 	d.event.Capacity = nil
@@ -333,26 +338,26 @@ func (f *EventEditingService) setTags(userID int64, text string) editingResult {
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventEditingService) skipTags(userID int64) editingResult {
+func (f *EventEditingService) skipTags(userID int64, token string) editingResult {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}
 	}
-	if state != eventTags {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}
+	if state != eventTags || !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, status: staleAction}
 	}
 
 	d.event.Tags = nil
 	return f.completeStep(userID, state, d)
 }
 
-func (f *EventEditingService) confirmEvent(ctx context.Context, userID int64) (editingResult, error) {
+func (f *EventEditingService) confirmEvent(ctx context.Context, userID int64, token string) (editingResult, error) {
 	state, d, exists := fsm.GetDraft[eventDraft](f.machine, userID)
 	if !exists {
 		return editingResult{status: noActiveDraft}, nil
 	}
-	if state != eventPreview {
-		return editingResult{state: state, draft: d, status: stepAlreadyCompleted}, nil
+	if state != eventPreview || !d.IsTokenValid(token) {
+		return editingResult{state: state, draft: d, status: staleAction}, nil
 	}
 
 	if d.updateField == domain.EventDates && !d.event.StartsAt.After(f.now()) {
@@ -378,7 +383,7 @@ func (f *EventEditingService) confirmEvent(ctx context.Context, userID int64) (e
 
 func (f *EventEditingService) reenterDates(userID int64, d eventDraft) editingResult {
 	state := eventStart
-	f.machine.Replace(userID, state, d)
+	d = f.replaceDraft(userID, state, d)
 	return editingResult{state: state, draft: d, status: startExpired}
 }
 
@@ -395,17 +400,18 @@ func (f *EventEditingService) beginEdit(userID int64, event domain.Event, field 
 	if f.repo == nil {
 		return editingResult{}, errors.New("event service is not configured")
 	}
-	d := cloneDraft(eventDraft{event: event, updateField: field})
-	f.machine.Replace(userID, step, d)
+	d := f.replaceDraft(userID, step, cloneDraft(eventDraft{event: event, updateField: field}))
 	return editingResult{state: step, draft: d, status: stepStarted}, nil
 }
 
-func (f *EventEditingService) inState(userID int64, step fsm.StateID) bool {
-	return f.machine.CurrentState(userID) == step
+func (f *EventEditingService) restore(userID int64, state fsm.StateID, saved eventDraft) eventDraft {
+	return f.replaceDraft(userID, state, cloneDraft(saved))
 }
 
-func (f *EventEditingService) restore(userID int64, state fsm.StateID, saved eventDraft) {
-	f.machine.Replace(userID, state, cloneDraft(saved))
+func (f *EventEditingService) replaceDraft(userID int64, state fsm.StateID, d eventDraft) eventDraft {
+	d.RotateScreenToken()
+	f.machine.Replace(userID, state, d)
+	return d
 }
 
 func (f *EventEditingService) staleCallback(userID int64) editingResult {

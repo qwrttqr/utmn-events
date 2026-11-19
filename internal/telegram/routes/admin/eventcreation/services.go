@@ -2,7 +2,6 @@ package eventcreation
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"slices"
@@ -405,7 +404,7 @@ func (f *EventCreationService) reenterDates(userID int64, d eventDraft) creation
 }
 
 func (f *EventCreationService) replaceDraft(userID int64, state fsm.StateID, d eventDraft) eventDraft {
-	d.SetScreenToken(rand.Text())
+	d.RotateScreenToken()
 	f.machine.Replace(userID, state, d)
 	return d
 }
