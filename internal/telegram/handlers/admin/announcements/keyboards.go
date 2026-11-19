@@ -14,7 +14,7 @@ func announcementKeyboard(state fsm.StateID) *models.InlineKeyboardMarkup {
 			[]models.InlineKeyboardButton{{Text: "Изменить текст", CallbackData: "admin:announcement:edit"}},
 		)
 	}
-	if state == textState || state == previewState {
+	if state == enterTextState || state == previewState {
 		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{{Text: "Отменить", CallbackData: "admin:announcement:cancel"}})
 	} else {
 		markup.InlineKeyboard = append(markup.InlineKeyboard, []models.InlineKeyboardButton{{Text: "Панель администратора", CallbackData: "admin:menu"}})

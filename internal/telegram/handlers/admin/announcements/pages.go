@@ -2,10 +2,13 @@ package announcements
 
 import (
 	"fmt"
+	"utmn-events-bot/internal/telegram/keyboards"
 
 	"utmn-events-bot/internal/fsm"
 	adminmenu "utmn-events-bot/internal/telegram/handlers/admin/menu"
 	"utmn-events-bot/internal/telegram/navigation"
+
+	"github.com/go-telegram/bot/models"
 )
 
 func resultPage(result announcementResult) navigation.Page {
@@ -15,11 +18,11 @@ func resultPage(result announcementResult) navigation.Page {
 	case announcementStale:
 		return stalePage()
 	case announcementMissing:
-		return announcementPage("Откройте создание объявления заново.", fsm.Idle, true)
+		return announcementPage("Откройте создание объявления заново.", announcementKeyboard(fsm.Idle), true)
 	case broadcastInProgress:
-		return announcementPage("Ваше объявление уже рассылается. Дождитесь отчёта.", fsm.Idle, true)
+		return announcementPage("Ваше объявление уже рассылается. Дождитесь отчёта.", announcementKeyboard(fsm.Idle), true)
 	case broadcastStarted:
-		return announcementPage("Рассылка началась. После завершения придёт отчёт.", fsm.Idle, true)
+		return announcementPage("Рассылка началась. После завершения придёт отчёт.", announcementKeyboard(fsm.Idle), true)
 	case announcementTextRequired:
 		page := draftPage(result.state, result.draft)
 		page.Text = "Отправьте текст объявления.\n\n" + page.Text
@@ -32,11 +35,15 @@ func resultPage(result announcementResult) navigation.Page {
 	return draftPage(result.state, result.draft)
 }
 
-func announcementPage(text string, state fsm.StateID, finished bool) navigation.Page {
+func announcementPage(
+	text string,
+	keyboard *models.InlineKeyboardMarkup,
+	finished bool,
+) navigation.Page {
 	return navigation.Page{
 		Key:          "admin:announcement",
 		Text:         text,
-		Keyboard:     announcementKeyboard(state),
+		Keyboard:     keyboard,
 		Admin:        true,
 		NoNavigation: true,
 		ClearHistory: finished,
@@ -48,11 +55,13 @@ func draftPage(state fsm.StateID, d draft) navigation.Page {
 	if state == previewState {
 		text = "Проверьте объявление:\n\n" + d.text + "\n\nОтправить?"
 	}
-	return announcementPage(text, state, false)
+
+	keyboard := keyboards.WithScreenToken(announcementKeyboard(state), d.Token)
+	return announcementPage(text, keyboard, false)
 }
 
 func stalePage() navigation.Page {
-	return announcementPage("Эта кнопка устарела. Откройте создание объявления заново.", fsm.Idle, true)
+	return announcementPage("Эта кнопка устарела. Откройте создание объявления заново.", announcementKeyboard(fsm.Idle), true)
 }
 
 func reportText(result report) string {

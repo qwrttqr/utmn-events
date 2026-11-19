@@ -2,6 +2,7 @@ package announcements
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"unicode/utf16"
 
 	"utmn-events-bot/internal/fsm"
+	"utmn-events-bot/internal/telegram/keyboards"
 )
 
 type Repository interface {
@@ -18,12 +20,13 @@ type Repository interface {
 }
 
 const (
-	textState    fsm.StateID = "admin.announcements.text"
-	previewState fsm.StateID = "admin.announcements.preview"
+	enterTextState fsm.StateID = "admin.announcements.text"
+	previewState   fsm.StateID = "admin.announcements.preview"
 )
 
 type draft struct {
 	text string
+	keyboards.TokenizedDraft
 }
 
 type announcementStatus uint8
@@ -55,21 +58,20 @@ type report struct {
 	err    error
 }
 
-type AnnouncementsService struct {
+type Service struct {
 	mu         sync.Mutex
 	repo       Repository
 	machine    *fsm.FSM
 	active     map[int64]bool
-	closed     bool
 	ctx        context.Context
 	cancel     context.CancelFunc
 	workers    sync.WaitGroup
 	broadcasts chan struct{}
 }
 
-func NewService(ctx context.Context, machine *fsm.FSM, repo Repository) *AnnouncementsService {
+func NewService(ctx context.Context, machine *fsm.FSM, repo Repository) *Service {
 	ctx, cancel := context.WithCancel(ctx)
-	return &AnnouncementsService{
+	return &Service{
 		repo:       repo,
 		machine:    machine,
 		active:     make(map[int64]bool),
@@ -79,19 +81,11 @@ func NewService(ctx context.Context, machine *fsm.FSM, repo Repository) *Announc
 	}
 }
 
-func (s *AnnouncementsService) Close() {
-	s.mu.Lock()
-	s.closed = true
-	s.cancel()
-	s.mu.Unlock()
-	s.workers.Wait()
+func (s *Service) enteringText(userID int64) bool {
+	return s.machine.CurrentState(userID) == enterTextState
 }
 
-func (s *AnnouncementsService) enteringText(userID int64) bool {
-	return s.machine.CurrentState(userID) == textState
-}
-
-func (s *AnnouncementsService) begin(userID int64) announcementResult {
+func (s *Service) begin(userID int64) announcementResult {
 	s.mu.Lock()
 	active := s.active[userID]
 	s.mu.Unlock()
@@ -99,13 +93,14 @@ func (s *AnnouncementsService) begin(userID int64) announcementResult {
 		return announcementResult{status: broadcastInProgress}
 	}
 	d := draft{}
-	s.machine.Replace(userID, textState, d)
-	return announcementResult{state: textState, draft: d}
+	d.SetScreenToken(rand.Text())
+	s.machine.Replace(userID, enterTextState, d)
+	return announcementResult{state: enterTextState, draft: d}
 }
 
-func (s *AnnouncementsService) setText(userID int64, text string) announcementResult {
-	state, d, exists := fsm.Load[draft](s.machine, userID)
-	if !exists || state != textState {
+func (s *Service) setText(userID int64, text string) announcementResult {
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
+	if !exists || state != enterTextState {
 		return announcementResult{status: announcementMissing}
 	}
 	text = strings.TrimSpace(text)
@@ -120,40 +115,42 @@ func (s *AnnouncementsService) setText(userID int64, text string) announcementRe
 		return announcementResult{state: state, draft: d, status: announcementTooLong}
 	}
 	d.text, state = text, previewState
+	d.SetScreenToken(rand.Text())
 	s.machine.Replace(userID, state, d)
 	return announcementResult{state: state, draft: d}
 }
 
-func (s *AnnouncementsService) edit(userID int64) announcementResult {
-	state, d, exists := fsm.Load[draft](s.machine, userID)
-	if !exists || state != previewState {
+func (s *Service) edit(userID int64, token string) announcementResult {
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
+	if !exists || state != previewState || !d.IsTokenValid(token) {
 		return announcementResult{status: announcementStale}
 	}
-	state = textState
+	state = enterTextState
+	d.SetScreenToken(rand.Text())
 	s.machine.Replace(userID, state, d)
 	return announcementResult{state: state, draft: d}
 }
 
-func (s *AnnouncementsService) cancelDraft(userID int64) announcementResult {
-	state, _, exists := fsm.Load[draft](s.machine, userID)
-	if !exists || (state != textState && state != previewState) {
+func (s *Service) cancelDraft(userID int64, token string) announcementResult {
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
+	if !exists || (state != enterTextState && state != previewState) || !d.IsTokenValid(token) {
 		return announcementResult{status: announcementStale}
 	}
 	s.machine.Clear(userID)
 	return announcementResult{status: announcementCancelled}
 }
 
-func (s *AnnouncementsService) prepareSend(userID int64) (announcementResult, *delivery, error) {
+func (s *Service) prepareSend(userID int64, token string) (announcementResult, *delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.ctx.Err() != nil {
+	if s.ctx.Err() != nil {
 		return announcementResult{}, nil, errors.New("announcement service stopped")
 	}
 	if s.active[userID] {
 		return announcementResult{status: broadcastInProgress}, nil, nil
 	}
-	state, d, exists := fsm.Load[draft](s.machine, userID)
-	if !exists || state != previewState {
+	state, d, exists := fsm.GetDraft[draft](s.machine, userID)
+	if !exists || state != previewState || !d.IsTokenValid(token) {
 		return announcementResult{status: announcementStale}, nil, nil
 	}
 	s.machine.Clear(userID)
@@ -162,7 +159,7 @@ func (s *AnnouncementsService) prepareSend(userID int64) (announcementResult, *d
 	return announcementResult{status: broadcastStarted}, &delivery{authorID: userID, text: d.text}, nil
 }
 
-func (s *AnnouncementsService) send(job delivery, sendMessage func(context.Context, int64, string) error, sendReport func(context.Context, int64, report) error) {
+func (s *Service) send(job delivery, sendMessage func(context.Context, int64, string) error, sendReport func(context.Context, int64, report) error) {
 	defer s.workers.Done()
 	defer func() {
 		s.mu.Lock()
